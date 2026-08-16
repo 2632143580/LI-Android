@@ -98,9 +98,9 @@ jobs:
           tail -n 220 build.log
           exit $CODE
 
-      # 编译失败：把关键错误行以「提交评论」+「Issue」形式回传（api.github.com 可达通道）
+      # 编译失败：把关键错误行以「提交评论」形式回传（api.github.com 可达通道，避免 Azure 日志被沙箱拦截）
       - name: 上报编译错误
-        if: steps.build.outcome == 'failure'
+        if: failure()
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -108,7 +108,6 @@ jobs:
           if [ -z "$ERR" ]; then ERR="(无关键行，附末尾90行)\n$(tail -90 build.log)"; fi
           ERR="${ERR:0:6000}"
           BODY=$(printf '%s' "$ERR" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')
-          echo "POSTing commit comment..."
           curl -sk -f -X POST \
             -H "Authorization: Bearer $GITHUB_TOKEN" \
             -H "Accept: application/vnd.github+json" \
@@ -116,14 +115,6 @@ jobs:
             -d "{\"body\": $BODY}" \
             "https://api.github.com/repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/comments" \
             -w "\nCOMMENT_HTTP=%{http_code}\n" || echo "comment_post_failed"
-          echo "Creating issue..."
-          curl -sk -f -X POST \
-            -H "Authorization: Bearer $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            -H "Content-Type: application/json" \
-            -d "{\"title\": \"BUILD ERROR $(echo $GITHUB_SHA | cut -c1-8)\", \"body\": $BODY, \"labels\": [\"ci-error\"]}" \
-            "https://api.github.com/repos/$GITHUB_REPOSITORY/issues" \
-            -w "\nISSUE_HTTP=%{http_code}\n" || echo "issue_post_failed"
 
       # 编译成功：上传 APK 作为可下载产物
       - name: 上传 APK 作为可下载产物
