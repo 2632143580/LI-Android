@@ -136,7 +136,7 @@ LI-Android/
 ## 六、待办（按优先级）
 
 1. **[已完成] JS 桥**：HTML → App 原生层回传"用户发消息"事件（MainActivity 注入 MutationObserver + fetch 拦截，AndroidBridge.onUserMessage 写 lastChatEpochMs），B 功能 lastChatTime 已精准（commit e1b7fdc）
-2. **[中] 设置页去重**：考虑让 App 设置页填一次 LLM 配置，自动注入 WebView（去掉"填两次"的困惑）
+2. **[已完成] 设置页去重（填一次注入两边）**：见 7.6
 3. **[低] UI 打磨**：主界面加一个浮层入口进设置（目前只能从 Intent 跳转，没有可见按钮）
 
 ---
@@ -175,3 +175,30 @@ LI-Android/
 - classic PAT 改 `.github/workflows/*.yml` 需要 **`workflow` scope**（否则 403 `refusing to allow ... without 'workflow' scope`）。
 - 用法：`git remote set-url origin https://<PAT>@github.com/...` → push → 立刻 `set-url` 还原为无 token 地址。本地不留明文。
 - 用户的 LI 仓库（`2632143580/li`）为 public，CI 拉取无需 token。
+
+### 7.6 设置页全面补全 + 数据面板 + 填一次注入两边（commit 6e29101）
+
+**用户诉求**：设置页"信息给足、该有的都要有" + 对数据的掌控感（知道数据在哪、能管理）。
+
+**数据地图（两套存储都在 `/data/data/com.li.android/` 私有沙盒，文件管理器翻不到）**：
+| 数据 | 存储位置 | 谁读写 |
+|---|---|---|
+| 聊天记录 / 网页聊天 LLM Key / mimo 语音 Key / 配色等全部 LI 设置 | LI 的 localStorage（键 `liChatData_v2`） | LI 网页（原生读不到内容） |
+| 推送 LLM Key / 推送总开关 / A·B 开关 / 阈值 / 时刻 / 上次时间 | App 原生 `shared_prefs/li_companion.xml` | App 原生 |
+
+**三个 Key 真相（用户曾混淆）**：
+- `llm-li` = LI 网页聊天 LLM Key（`state.settings.apiKey`，多服务商各存 `keys[provider]`），存 localStorage。
+- `llm-推送` = App 原生推送 LLM（`AppPreferences.apiKey/baseUrl/model`），存 shared_prefs。
+- `key-语音mimo` = LI 的云端 TTS Key（`state.settings.ttsCloud.apiKey`，默认 `https://api.xiaomimimo.com/v1` / `mimo-v2.5-tts`），仅 `ttsSource='cloud'` 时生效，存 localStorage。**这是语音服务 Key，与 LLM Key 不是一回事，不能"填一次通用"。**
+
+**填一次注入两边（syncToWeb）实现**：App 存推送 LLM 后，勾选 `syncToWeb`，MainActivity 在 LI 加载后注入脚本，把推送 Key 写进 LI 的 `liChatData_v2.settings.apiKey/apiUrl/model` 并 `location.reload()` 让 LI 生效。靠"内容是否一致"做幂等防死循环。**只能合并"同为 LLM 的聊天+推送"，mimo 语音另算。**
+
+**数据面板实现**：注入脚本在 LI 加载时统计 localStorage 占用/聊天节点数/语音源，经 `AndroidBridge.onStorageStats(json)` 存回 `AppPreferences.storageStatsJson`，设置页读取展示。清空/重置/导出通过设置页写 `pendingWebAction`，由 MainActivity 在下次 LI 加载时落地（清空聊天树 / removeItem+清原生 / 写导出文件到 `getExternalFilesDir`，PC 经 USB 可存取），执行完 `onWebActionDone()` 清除标记。
+
+**A·B 独立开关**：`AppPreferences.enableA/enableB`，`CompanionWorker.shouldTrigger` 分别判。
+
+**注意点（易踩）**：
+- 设置页与 WebView 不在同一 Activity，故网页侧动作只能"写标记→主界面加载时执行"，操作后需提示用户"返回主界面生效"。
+- 注入脚本用 `var NATIVE = <JSON>` 直接内联原生配置，避免字符串转义坑；JSON 来自 `org.json.JSONObject`，安全无注入风险。
+- `AndroidBridge` 构造函数加了 `Context`（导出写文件需要），MainActivity 改为 `AndroidBridge(this) { AppPreferences(this) }`。
+- 本次改动**未触碰 `.github/workflows/`**，push 用 `git -c credential.helper=store`（store 里有 LI-Android 凭据），无需再嵌 PAT、无需 workflow scope。
