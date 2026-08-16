@@ -3,9 +3,20 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <group android:name="li_mark" android:fillColor="#FFFFFF">
-        <rect android:x="33" android:y="30" android:width="12" android:height="56" android:rx="6" />
-        <circle android:cx="71" android:cy="38" android:r="8" />
-        <rect android:x="65" android:y="48" android:width="12" android:height="38" android:rx="6" />
-    </group>
+    <!-- 字母 l：一段竖线（圆头描边） -->
+    <path
+        android:pathData="M34,27 L34,81"
+        android:strokeWidth="14"
+        android:strokeColor="#FFFFFF"
+        android:strokeLineCap="round" />
+    <!-- 字母 i：竖线 -->
+    <path
+        android:pathData="M74,44 L74,81"
+        android:strokeWidth="14"
+        android:strokeColor="#FFFFFF"
+        android:strokeLineCap="round" />
+    <!-- 字母 i：顶部圆点（用弧线画圆，避免 circle 的 cx/cy/r 属性） -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M74,30 m-7,0 a7,7 0 1,0 14,0 a7,7 0 1,0 -14,0" />
 </vector>
