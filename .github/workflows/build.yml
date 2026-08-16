@@ -19,19 +19,27 @@ jobs:
           distribution: temurin
           java-version: 17
 
+      # 手动安装 Android SDK（不依赖第三方 action，最稳）
       - name: 安装 Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: 接受 SDK 许可并安装编译所需平台
         run: |
+          export ANDROID_HOME=$HOME/android-sdk
+          mkdir -p "$ANDROID_HOME/cmdline-tools"
+          curl -o cmdline-tools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+          unzip -q cmdline-tools.zip -d "$ANDROID_HOME/cmdline-tools"
+          mv "$ANDROID_HOME/cmdline-tools/cmdline-tools" "$ANDROID_HOME/cmdline-tools/latest"
+          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
           yes | sdkmanager --licenses
           sdkmanager "platforms;android-34" "build-tools;34.0.0"
 
+      # 安装 Gradle 8.9（工程指定版本，AGP 8.5.2 要求）
       - name: 安装 Gradle 8.9
         run: |
-          wget -q https://services.gradle.org/distributions/gradle-8.9-bin.zip
-          unzip -q gradle-8.9-bin.zip
-          echo "$PWD/gradle-8.9/bin" >> "$GITHUB_PATH"
+          if ! command -v gradle >/dev/null 2>&1; then
+            curl -o gradle-8.9-bin.zip https://services.gradle.org/distributions/gradle-8.9-bin.zip
+            unzip -q gradle-8.9-bin.zip
+            echo "$PWD/gradle-8.9/bin" >> "$GITHUB_PATH"
+          fi
 
       - name: 编译 debug APK
         run: gradle assembleDebug --no-daemon --stacktrace
