@@ -89,7 +89,14 @@ jobs:
       # 注意：不要用 continue-on-error，否则失败会被伪装成绿色、且错误评论机制不会触发
       - name: 编译 debug APK
         id: build
-        run: gradle assembleDebug --no-daemon --stacktrace > build.log 2>&1
+        run: |
+          set +e
+          gradle assembleDebug --no-daemon --stacktrace > build.log 2>&1
+          CODE=$?
+          set -e
+          echo "===== BUILD LOG TAIL (last 220 lines) ====="
+          tail -n 220 build.log
+          exit $CODE
 
       # 编译失败：把关键错误行以「提交评论」形式回传，远程可直接读取定位
       - name: 上报编译错误
@@ -114,3 +121,11 @@ jobs:
         with:
           name: li-android-li-v${{ steps.li-version.outputs.version }}-run${{ github.run_number }}
           path: app/build/outputs/apk/debug/app-debug.apk
+
+      # 无论成败都上传 build.log，便于远程直接读取真实错误（避免被 set -e 吞掉）
+      - name: 上传 build.log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-run${{ github.run_number }}
+          path: build.log
