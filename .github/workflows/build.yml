@@ -38,8 +38,11 @@ jobs:
           unzip -q cmdline-tools.zip -d "$ANDROID_HOME/cmdline-tools"
           mv "$ANDROID_HOME/cmdline-tools/cmdline-tools" "$ANDROID_HOME/cmdline-tools/latest"
           echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
-          # 写入 GITHUB_ENV 时也显式覆盖，确保后续步骤只用我们的 SDK
+          # 写入 GITHUB_ENV 时也显式覆盖，确保后续步骤只用我们的 SDK。
+          # 关键：runner 自带 ANDROID_SDK_ROOT 指向它预装的 SDK，只在当前 shell unset 不跨步生效，
+          # 必须把两个变量都用 GITHUB_ENV 指到同一自定义 SDK，否则 Gradle 报"different paths to the SDK"。
           echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
           export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
           yes | sdkmanager --licenses
           sdkmanager "platforms;android-34" "build-tools;34.0.0"
@@ -54,9 +57,9 @@ jobs:
           fi
 
       # 编译 debug APK；输出全部写入 build.log（供失败时报错）
+      # 注意：不要用 continue-on-error，否则失败会被伪装成绿色、且错误评论机制不会触发
       - name: 编译 debug APK
         id: build
-        continue-on-error: true
         run: gradle assembleDebug --no-daemon --stacktrace > build.log 2>&1
 
       # 编译失败：把关键错误行以「提交评论」形式回传，远程可直接读取定位
