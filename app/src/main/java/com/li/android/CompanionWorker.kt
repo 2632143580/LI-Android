@@ -34,21 +34,25 @@ class CompanionWorker(ctx: Context, params: WorkerParameters) :
         val hour = now.get(Calendar.HOUR_OF_DAY)
         val minute = now.get(Calendar.MINUTE)
 
-        // A 定时陪伴：当前落在某预设时刻 ±7 分钟内，且今天该时刻还没发过
-        for (slot in prefs.scheduleTimes) {
-            if (slot.hour == hour && kotlin.math.abs(slot.minute - minute) <= 7) {
-                if (!prefs.wasSentToday(slot)) {
-                    prefs.markSentToday(slot)
-                    return true
+        // A 定时陪伴：当前落在某预设时刻 ±7 分钟内，且今天该时刻还没发过（需 enableA 开启）
+        if (prefs.enableA) {
+            for (slot in prefs.scheduleTimes) {
+                if (slot.hour == hour && kotlin.math.abs(slot.minute - minute) <= 7) {
+                    if (!prefs.wasSentToday(slot)) {
+                        prefs.markSentToday(slot)
+                        return true
+                    }
                 }
             }
         }
 
-        // B 久未互动：距上次聊天超过阈值，且距上次主动推送也超过阈值（防刷屏）
-        val idleMs = (prefs.idleHours * 3600_000L).toLong()
-        val sinceChat = System.currentTimeMillis() - prefs.lastChatEpochMs
-        val sinceProactive = System.currentTimeMillis() - prefs.lastProactiveEpochMs
-        if (sinceChat > idleMs && sinceProactive > idleMs) return true
+        // B 久未互动：距上次聊天超过阈值，且距上次主动推送也超过阈值（防刷屏，需 enableB 开启）
+        if (prefs.enableB) {
+            val idleMs = (prefs.idleHours * 3600_000L).toLong()
+            val sinceChat = System.currentTimeMillis() - prefs.lastChatEpochMs
+            val sinceProactive = System.currentTimeMillis() - prefs.lastProactiveEpochMs
+            if (sinceChat > idleMs && sinceProactive > idleMs) return true
+        }
 
         return false
     }

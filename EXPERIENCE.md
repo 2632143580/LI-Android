@@ -135,6 +135,43 @@ LI-Android/
 
 ## 六、待办（按优先级）
 
-1. **[高] JS 桥**：HTML → App 原生层回传"用户发消息"事件，让 B 功能（久未互动）的 lastChatTime 精准
+1. **[已完成] JS 桥**：HTML → App 原生层回传"用户发消息"事件（MainActivity 注入 MutationObserver + fetch 拦截，AndroidBridge.onUserMessage 写 lastChatEpochMs），B 功能 lastChatTime 已精准（commit e1b7fdc）
 2. **[中] 设置页去重**：考虑让 App 设置页填一次 LLM 配置，自动注入 WebView（去掉"填两次"的困惑）
 3. **[低] UI 打磨**：主界面加一个浮层入口进设置（目前只能从 Intent 跳转，没有可见按钮）
+
+---
+
+## 七、版本同步自动化（2026-08-17）
+
+### 7.1 背景与决策
+
+**问题**：LI 是纯前端多文件工程（`E:/xMe/aifront/LI`，ES Module + Vite 构建为单文件 `dist/index.html`）。手机版 LI-Android 把 `dist/index.html` 拷进 `app/src/main/assets/`。之前每次 LI 改完，要手动 build → 拷 → 提交 LI-Android → 构建 → 下载 APK，步骤多且易漏。
+
+**决策（用户拍板）**：把 LI 源码推上 GitHub（`github.com/2632143580/li`，public），让 LI-Android 的 CI 自动拉 LI 源码、自己 `npm run build`、把产物覆盖进 `assets/`。实现"LI 一更新，手机版自动跟"。
+
+### 7.2 CI 改造要点（build.yml）
+
+- 在 checkout 本仓库后，再用 `actions/checkout` 拉 `2632143580/li` 到 `li-src/` 子目录（public 仓库无需 token）。
+- `setup-node` 装 Node 22 → `npm install` → `npm run build`（LI 的 build 含 lint + vite-plugin-singlefile，产出 `li-src/dist/index.html`）。
+- `cp li-src/dist/index.html ../app/src/main/assets/index.html` 覆盖。
+- `node -p "require('./li-src/package.json').version"` 读 LI 版本号，写入 `$GITHUB_OUTPUT` 并 `echo -n "$VERSION" > app/src/main/assets/li_version.txt`（APK 内可读，设置页显示）。
+- artifact 命名：`li-android-li-v${{ steps.li-version.outputs.version }}-run${{ github.run_number }}`，一眼区分 LI 版本与构建序号。
+
+### 7.3 本地一键同步脚本（ci-helpers/sync-li.bat）
+
+- 作用：构建 LI → 拷 `dist/index.html` 到 LI-Android/assets → `git add/commit/push`（用本机 Git 凭据）。
+- 适用：不想走 CI、想本地即时同步时用。双击即跑（需本机 Node + LI-Android push 权限）。
+- 注意：首次 push 因含 workflow 改动，本机凭据或所用 PAT 都需 `workflow` scope。
+
+### 7.4 设置页版本可见（#6）
+
+- `activity_settings.xml` 底部「关于」区：两个 TextView（`tvAppVersion`/`tvLiVersion`）。
+- `SettingsActivity.kt`：`getAppVersion()` 读 `PackageManager` 的 versionName；`getLiVersion()` 读 `assets/li_version.txt`（CI 写入），本地未构建时回退"开发版（本地运行）"。
+- 效果：用户在手机设置页直接看到"本机应用版本 1.0 + 内置 LI 内核版本 1.0.0"，不用翻沙盒。
+
+### 7.5 PAT 推送铁律
+
+- 沙箱无 GitHub 登录态，`git push` 必须带 PAT。
+- classic PAT 改 `.github/workflows/*.yml` 需要 **`workflow` scope**（否则 403 `refusing to allow ... without 'workflow' scope`）。
+- 用法：`git remote set-url origin https://<PAT>@github.com/...` → push → 立刻 `set-url` 还原为无 token 地址。本地不留明文。
+- 用户的 LI 仓库（`2632143580/li`）为 public，CI 拉取无需 token。

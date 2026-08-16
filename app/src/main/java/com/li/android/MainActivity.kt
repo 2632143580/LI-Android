@@ -11,6 +11,7 @@ import android.provider.Settings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Button
+import org.json.JSONObject
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -37,7 +38,7 @@ class MainActivity : AppCompatActivity() {
         PushScheduler.enqueue(this)
 
         val prefs = AppPreferences(this)
-        bridge = AndroidBridge { AppPreferences(this) }
+        bridge = AndroidBridge(this) { AppPreferences(this) }
 
         webView = findViewById(R.id.webview)
         webView.settings.javaScriptEnabled = true
@@ -51,6 +52,7 @@ class MainActivity : AppCompatActivity() {
             override fun onPageFinished(view: WebView, url: String) {
                 super.onPageFinished(view, url)
                 injectChatObserver(view)
+                injectConfigScript(view)
             }
         }
 
@@ -158,5 +160,126 @@ class MainActivity : AppCompatActivity() {
     @Deprecated("使用 OnBackPressedDispatcher")
     override fun onBackPressed() {
         if (webView.canGoBack()) webView.goBack() else super.onBackPressed()
+    }
+
+    /**
+     * 向 LI 网页注入「配置同步 + 数据面板」脚本（不修改 LI 源码，与版本解耦）。
+     *
+     * 做四件事：
+     *   1) 统计 LI 的 localStorage 占用 / 聊天节点数，回传给原生（数据面板显示用）。
+     *   2) 执行 pendingWebAction（clear_chat / reset_all / export）—— 设置页写入，这里落地。
+     *   3) 若开启「填一次注入两边」，把推送 LLM 写进 LI 的 localStorage，前台聊天免再填。
+     *   4) 若填了 mimo 云端语音 Key，写进 LI 的 ttsCloud 并切到云端语音源。
+     *
+     * 原生配置以 JSON 直接内联进脚本（var NATIVE = {...}），避免字符串转义问题。
+     * 写入 localStorage 后如需让 LI 立即生效会 location.reload()；靠「内容是否一致」做幂等防死循环。
+     */
+    private fun injectConfigScript(webView: WebView) {
+        val prefs = AppPreferences(this)
+        val nativeConfig = JSONObject().apply {
+            put("syncToWeb", prefs.syncToWeb)
+            put("pendingAction", prefs.pendingWebAction)
+            put("push", JSONObject().apply {
+                put("apiKey", prefs.apiKey)
+                put("apiUrl", prefs.baseUrl)
+                put("model", prefs.model)
+            })
+            put("tts", JSONObject().apply {
+                put("apiKey", prefs.ttsApiKey)
+                put("baseUrl", prefs.ttsBaseUrl)
+                put("model", prefs.ttsModel)
+            })
+        }.toString()
+
+        // language=JavaScript
+        val js = """
+            (function() {
+                if (window.__liCfgInjected) return;
+                window.__liCfgInjected = true;
+
+                var NATIVE = $nativeConfig;
+                var STORAGE_KEY = 'liChatData_v2';
+
+                function readData() {
+                    try { return JSON.parse(localStorage.getItem(STORAGE_KEY)); }
+                    catch (e) { return null; }
+                }
+                function writeData(d) { localStorage.setItem(STORAGE_KEY, JSON.stringify(d)); }
+                function countNodes(n) {
+                    if (!n || typeof n !== 'object') return 0;
+                    var c = 1;
+                    if (n.children) for (var i = 0; i < n.children.length; i++) c += countNodes(n.children[i]);
+                    return c;
+                }
+
+                // 1) 存储统计回传
+                (function () {
+                    var total = 0, keys = 0, nodes = 0, ttsSource = '?', ttsCfg = false;
+                    for (var i = 0; i < localStorage.length; i++) {
+                        var k = localStorage.key(i); var v = localStorage.getItem(k);
+                        total += (k ? k.length : 0) + (v ? v.length : 0); keys++;
+                    }
+                    var d = readData();
+                    if (d && d.chatTree) nodes = countNodes(d.chatTree);
+                    if (d && d.settings) {
+                        ttsSource = d.settings.ttsSource || '?';
+                        ttsCfg = !!(d.settings.ttsCloud && d.settings.ttsCloud.apiKey);
+                    }
+                    try { window.AndroidBridge.onStorageStats(JSON.stringify({
+                        totalBytes: total, keyCount: keys, chatNodes: nodes,
+                        ttsSource: ttsSource, ttsCloudConfigured: ttsCfg
+                    })); } catch (e) {}
+                })();
+
+                // 2) 待执行动作
+                if (NATIVE.pendingAction === 'clear_chat') {
+                    var d = readData() || { settings: {} };
+                    d.chatTree = { role: 'system', content: '', children: [] };
+                    d.msgIdCounter = 0;
+                    writeData(d);
+                    try { window.AndroidBridge.onWebActionDone(); } catch (e) {}
+                    location.reload(); return;
+                }
+                if (NATIVE.pendingAction === 'reset_all') {
+                    localStorage.removeItem(STORAGE_KEY);
+                    try { window.AndroidBridge.resetAllNative(); } catch (e) {}
+                    try { window.AndroidBridge.onWebActionDone(); } catch (e) {}
+                    location.reload(); return;
+                }
+                if (NATIVE.pendingAction === 'export') {
+                    var raw = localStorage.getItem(STORAGE_KEY) || '{}';
+                    try { window.AndroidBridge.exportChat(raw); } catch (e) {}
+                    try { window.AndroidBridge.onWebActionDone(); } catch (e) {}
+                }
+
+                // 3) 填一次注入两边：把推送 LLM 同步给 LI 前台聊天
+                if (NATIVE.syncToWeb && NATIVE.push && NATIVE.push.apiKey) {
+                    var d = readData();
+                    if (d && d.settings) {
+                        var s = d.settings;
+                        if (s.apiKey !== NATIVE.push.apiKey || s.apiUrl !== NATIVE.push.apiUrl || s.model !== NATIVE.push.model) {
+                            s.apiKey = NATIVE.push.apiKey;
+                            s.apiUrl = NATIVE.push.apiUrl;
+                            s.model = NATIVE.push.model;
+                            writeData(d); location.reload(); return;
+                        }
+                    }
+                }
+
+                // 4) mimo 云端语音
+                if (NATIVE.tts && NATIVE.tts.apiKey) {
+                    var d = readData();
+                    if (d && d.settings) {
+                        d.settings.ttsSource = 'cloud';
+                        d.settings.ttsCloud = d.settings.ttsCloud || {};
+                        d.settings.ttsCloud.apiKey = NATIVE.tts.apiKey;
+                        d.settings.ttsCloud.baseUrl = NATIVE.tts.baseUrl || 'https://api.xiaomimimo.com/v1';
+                        d.settings.ttsCloud.model = NATIVE.tts.model || 'mimo-v2.5-tts';
+                        writeData(d); location.reload(); return;
+                    }
+                }
+            })();
+        """
+        webView.evaluateJavascript(js, null)
     }
 }
