@@ -1,0 +1,140 @@
+# LI-Android 构建与踩坑经验
+
+> 独立于 `LI/经验.md`，专门记录安卓子工程的真实教训。
+> 每条都有"事实位置 + 根因 + 修法"，不是泛泛建议。
+
+---
+
+## 一、架构决策记录
+
+### 1.1 为什么选原生 App 而非 PWA/Web Push（2026-08-16 决策）
+
+**约束**：用户要求（1）AI 主动推送（2）手机本地运行（3）零服务器（4）不部署到云。
+
+**结论**：PWA/Web Push 物理上做不到"零服务器+真后台推送"。Web Push 需要 VAPID 密钥 + 推送服务 + 触发接口 = 必须有服务端。浏览器对后台 JS 杀得比原生还狠。唯一满足全部约束的路径是 **原生 App + WorkManager 周期唤醒 + NotificationManager 本地通知 + 直连 LLM**。
+
+**代价（已告知用户并接受）**：
+- "主动"= 定时器到点问 LLM，不是 AI 自主觉醒
+- 最短 15 分钟一次（安卓硬限制），且 Doze 会延迟
+- 国产手机需手动开"自启动/电池无限制"
+
+### 1.2 为什么用 GitHub Actions 而非 Codespaces 构建
+
+**事实**：Codespaces 用 `.devcontainer` 初始化时卡死（容器建不起来，终端一直"正在打开远程..."）。根因：devcontainer 叠了重镜像 + 重复装 SDK，在 Codespaces 免费资源下超时。
+
+**决策**：换 GitHub Actions（`.github/workflows/build.yml`），用户零操作——推送自动触发、产物从 Artifacts 下载。
+
+---
+
+## 二、CI/CD 踩坑实录（每条都是真金白银换来的）
+
+### 2.1 `$GITHUB_PATH` 不在同一步骤内生效
+
+**现象**：CI 第 4 步「安装 Android SDK」报 `sdkmanager: command not found`。
+**根因**：把 sdkmanager 路径写入了 `$GITHUB_PATH`，但这个变量只对**后续步骤**生效。同一步骤内调用 sdkmanager 时 PATH 还没更新。
+**修法**：在调用前加 `export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"`（同步骤内立即生效）。
+**通用规则**：`$GITHUB_PATH` / `$GITHUB_ENV` 都是"下一步才生效"。同步骤内要用的变量必须同时 `export`。
+
+### 2.2 Runner 预装 SDK 导致双路径冲突
+
+**现象**：Gradle 报 `Several environment variables and/or system properties contain different paths to the SDK`。
+**根因**：GitHub Actions `ubuntu-latest` runner 预装了 Android SDK（在 `/usr/local/lib/android/sdk`），我们的 workflow 又设了 `ANDROID_HOME=$HOME/android-sdk`。Gradle 检测到两个不同路径直接拒绝。
+**修法**：在安装步骤开头 `unset ANDROID_SDK_ROOT ANDROID_HOME` 清掉 runner 自带的，再设我们自己的；并且通过 `$GITHUB_ENV` **持久写入** `ANDROID_SDK_ROOT=$ANDROID_HOME`（不只是 `export`，因为 export 只管当前步骤 shell）。
+**关键认知**：runner 的环境变量跨步骤存在，单步 `unset` 不够，必须用 `$GITHUB_ENV` 覆盖。
+
+### 2.3 `continue-on-error: true` 会伪装成功
+
+**现象**：编译步骤实际失败但 job 显示绿色，导致错误评论机制没触发（评论只在 `if: failure()` 时发）。
+**根因**：`continue-on-error: true` 让步骤失败不被传播，后续的 `if: failure()` 判断为 false。
+**修法**：删掉 `continue-on-error`，让真实失败暴露出来。
+**教训**：调试 CI 时永远不要用 `continue-on-error`，它会掩盖真正的问题。
+
+### 2.4 layout XML 的 namespace 写错导致资源链接失败
+
+**现象**：aapt2 报 `attribute android:layout_constraintEnd_toEndOf not found`。
+**根因**：`activity_main.xml` 里 `xmlns:app="http://schemas.android.com/apk/res/android"` 写错了。ConstraintLayout 的自定义属性（`app:layout_constraint*`）需要 `res-auto` 命名空间才能解析。写成 `res/android` 就只能在框架属性里找，找不到库自定义属性。
+**修法**：改为 `xmlns:app="http://schemas.android.com/apk/res-auto"`。
+**通用规则**：用到任何 `app:` 前缀的自定义属性，namespace 必须是 `res-auto`。
+
+### 2.5 本机沙箱网络限制影响诊断
+
+**事实**：本机沙箱（WorkBuddy 执行环境）无法连接 GitHub 的 Azure 日志存储（`*.blob.core.windows.net`）。`curl` 不加 `-k` 会 SSL 报错（exit 35），加了 `-k` 能通 GitHub API 但 Azure blob 还是连不上。
+**影响**：GitHub Actions 的完整日志（`/actions/jobs/{id}/logs`）是一个 302 跳转到 Azure 签名 URL 的 blob，沙箱读不到。
+**解法**：CI 失败时把关键错误行写成「提交评论」（commit comment），提交评论走 GitHub API（`/repos/{owner}/{repo}/commits/{sha}/comments`），沙箱能正常读取。这已成为标准错误通道。
+**沉淀脚本**：`ci-helpers/fetch_ci_error.sh` 封装了这个流程。
+
+---
+
+## 三、Git 操作教训
+
+### 3.1 远端已被网页操作修改时本地会分叉
+
+**现象**：用户通过 GitHub 网页建分支+PR 合并上传了 index.html，本地不知道，再次提交同一文件后推送被拒（"fetch first"）。
+**教训**：多人/多端操作同一仓库时，推送前必须先 `git fetch` + 比对远端 HEAD。不能假设远端还是上次看到的状态。
+
+### 3.2 `git show origin/main:path` 可能返回报错文本而非文件内容
+
+**现象**：`git show origin/main:app/src/main/assets/index.html` 输出 42 字节，误判为"远端文件只有 42B 是坏的"。
+**根因**：`origin/main` 引用在沙箱里未正确建立（`refs/remotes/origin/` 目录不存在），`git show` 返回的是 `fatal: invalid object name` 报错文本本身（恰好约 42 字符），不是文件内容。
+**修正**：最终用 SHA 直接操作（`git ls-tree -r --name-only 77c9a7b`）绕开了引用问题。
+**教训**：当 `git show` 输出异常短时，先确认它是不是报错文本而不是文件内容。
+
+### 3.3 Git Credential Manager 在无 TTY 环境下失败
+
+**现象**：`git push` 偶发 `Invalid username or token`，但 `ls-remote` 同一 token 能读。
+**根因**：Git Credential Manager（GCM）需要弹交互窗口认证，沙箱无 TTY 就失败。但 `.git-credentials` 文件里的 token 对读操作有效（可能走了不同的代码路径）。
+**修法**：`git -c credential.helper=store push ...` 强制用 store 方式（直接读文件），绕开 GCM。
+
+---
+
+## 四、Android 平台真相
+
+### 4.1 WebView 内核 = 手机系统自带 Chromium
+
+**事实**：Android WebView 不是独立浏览器，是系统级组件（`android.webkit.WebView`），底层跟你手机 Chrome 用同一个 Chromium 内核。不同手机的 WebView 版本不同（小米/华为/三星各有一套），但都支持现代 Web 标准。
+**含义**：LI 的 HTML 在 App 里的渲染行为跟你在手机 Chrome 里打开基本一致。CSS/JS 兼容性不需要额外处理。
+
+### 4.2 WorkManager 最短间隔与延迟
+
+**事实**：`PeriodicWorkRequest.Builder(..., 15, TimeUnit.MINUTES)` 的 15 分钟是安卓硬性最小值，设更小会被强制提升到 15 分钟。且 Doze 模式下实际执行时间会往后拖（可能延到 30 分钟+）。
+**行业实践**：所有本地推送 App 都接受这个"尽力而为"语义，没有 workaround。
+
+### 4.3 国产 ROM 杀后台是推送失灵头号原因
+
+**事实**：小米 MIUI、华为 EMUI、三星 OneUI 都有激进的省电策略，会杀掉后台进程包括 WorkManager 的 worker。
+**工程应对**：内置"申请电池优化豁免"弹窗（`PowerManager.isIgnoringBatteryOptimizations`）+ 通知权限请求。但仍需用户手动去系统设置开"自启动"。
+**行业现实**：没有任何 App 能替用户点这个开关。这是安卓权限模型决定的，不是 bug。
+
+---
+
+## 五、工程结构速查
+
+```
+LI-Android/
+├── .github/workflows/build.yml   # CI：自动构建 debug APK
+├── ci-helpers/fetch_ci_error.sh  # 从提交评论通道抓构建错误
+├── app/src/main/
+│   ├── AndroidManifest.xml       # 权限（通知/网络/电池/开机自启）
+│   ├── java/com/li/android/
+│   │   ├── MainActivity.kt       # 入口：WebView 加载 assets/index.html
+│   │   ├── SettingsActivity.kt    # 设置页：LLM Key/URL/Model/定时/闲置
+│   │   ├── AppPreferences.kt      # SharedPreferences 封装
+│   │   ├── LlmClient.kt           # OkHttp 直连 LLM（推送调度器用）
+│   │   ├── NotificationHelper.kt  # 系统原生本地通知
+│   │   ├── CompanionWorker.kt     # WorkManager Worker：A+B 判断逻辑
+│   │   └── PushScheduler.kt       # 注册/取消周期任务
+│   └── res/
+│       ├── layout/
+│       │   ├── activity_main.xml     # 主界面（WebView 全屏）
+│       │   └── activity_settings.xml # 设置表单
+│       └── values/
+│           ├── strings.xml
+│           └── themes.xml
+└── app/src/main/assets/index.html  # LI 构建物（无 key 版，离线加载）
+```
+
+## 六、待办（按优先级）
+
+1. **[高] JS 桥**：HTML → App 原生层回传"用户发消息"事件，让 B 功能（久未互动）的 lastChatTime 精准
+2. **[中] 设置页去重**：考虑让 App 设置页填一次 LLM 配置，自动注入 WebView（去掉"填两次"的困惑）
+3. **[低] UI 打磨**：主界面加一个浮层入口进设置（目前只能从 Intent 跳转，没有可见按钮）
