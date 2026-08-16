@@ -31,6 +31,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
     private lateinit var bridge: AndroidBridge
+    private var webViewDestroyed = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -61,7 +62,7 @@ class MainActivity : AppCompatActivity() {
 
         // 设置页点「刷新」时，重新向 WebView 注入统计脚本，拿到最新 LI 存储统计
         AppBus.refreshStats = {
-            runOnUiThread { if (!webView.isDestroyed) injectConfigScript(webView) }
+            runOnUiThread { if (!webViewDestroyed) injectConfigScript(webView) }
         }
 
         findViewById<Button>(R.id.btnSettings).setOnClickListener {
@@ -73,6 +74,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        webViewDestroyed = true
         AppBus.refreshStats = null
         super.onDestroy()
     }
@@ -82,7 +84,7 @@ class MainActivity : AppCompatActivity() {
      * MutationObserver 监听 .chat-bubble--user，或兜底拦截 fetch POST /completions。
      */
     private fun injectChatObserver(webView: WebView) {
-        if (webView.isDestroyed) return
+        if (webViewDestroyed) return
         val js = """
             (function() {
                 if (window.__liBridgeInjected) return;
@@ -134,7 +136,7 @@ class MainActivity : AppCompatActivity() {
      *     从根本上杜绝「一直闪、无法操作」的死循环。
      */
     private fun injectConfigScript(webView: WebView) {
-        if (webView.isDestroyed) return
+        if (webViewDestroyed) return
         val prefs = AppPreferences(this)
         val nativeConfig = JSONObject().apply {
             put("syncToWeb", prefs.syncToWeb)
