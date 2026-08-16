@@ -20,15 +20,25 @@ jobs:
           java-version: 17
 
       # 手动安装 Android SDK（不依赖第三方 action，最稳）
+      # 关键：runner 预装了 Android SDK（/usr/local/lib/android/sdk），
+      # 若不清掉系统变量，Gradle 会检测到两个不同 SDK 路径直接报错：
+      # "Several environment variables contain different paths to the SDK"
       - name: 安装 Android SDK
         run: |
+          # 清除 runner 自带的 SDK 环境变量，避免冲突
+          unset ANDROID_SDK_ROOT
+          unset ANDROID_HOME
           export ANDROID_HOME=$HOME/android-sdk
           mkdir -p "$ANDROID_HOME/cmdline-tools"
           curl -o cmdline-tools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
           unzip -q cmdline-tools.zip -d "$ANDROID_HOME/cmdline-tools"
           mv "$ANDROID_HOME/cmdline-tools/cmdline-tools" "$ANDROID_HOME/cmdline-tools/latest"
           echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
-          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          # 写入 GITHUB_ENV 时也显式覆盖，确保后续步骤只用我们的 SDK
+          {
+            echo "ANDROID_HOME=$ANDROID_HOME"
+            echo "ANDROID_SDK_ROOT="
+          } >> "$GITHUB_ENV"
           export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
           yes | sdkmanager --licenses
           sdkmanager "platforms;android-34" "build-tools;34.0.0"
