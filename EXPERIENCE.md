@@ -202,3 +202,27 @@ LI-Android/
 - 注入脚本用 `var NATIVE = <JSON>` 直接内联原生配置，避免字符串转义坑；JSON 来自 `org.json.JSONObject`，安全无注入风险。
 - `AndroidBridge` 构造函数加了 `Context`（导出写文件需要），MainActivity 改为 `AndroidBridge(this) { AppPreferences(this) }`。
 - 本次改动**未触碰 `.github/workflows/`**，push 用 `git -c credential.helper=store`（store 里有 LI-Android 凭据），无需再嵌 PAT、无需 workflow scope。
+
+## 2026-08-16 打磨轮：编译连续翻车 + CI 排错通道（重要！）
+
+用户验收"闪烁/设置页/图标/改名"打磨提交（56d8ab9）后**构建直接红叉**。连踩三个编译错误，逐个定位修掉（最终 9a300a3 转绿）：
+
+1. **aapt2 不认矢量图 `rect`/`circle` 属性**（最隐蔽）：手绘图标 `ic_launcher_foreground.xml` / `ic_notification.xml` 用了 `<rect android:rx>`、`<circle android:cx/cy/r>`，aapt2 报 `attribute android:rx not found` / `attribute android:cx not found`，导致 `processDebugResources FAILED`。
+   - **根因**：本工程 aapt2 对该写法不买账（可能与 build-tools 34.0.0 的 schema 解析有关）。
+   - **修法**：图标全部改用 `<path>` + `android:strokeColor/strokeWidth/strokeLineCap`（"li" 字形用描边竖线 + 弧线画圆点），绕开 rect/circle 的坑。矢量图里 path 写法永远被 aapt2 认。
+   - **教训**：自己画 Android 矢量图标，优先用 `<path>`，别用 `<rect rx>`/`<circle>`。
+
+2. **`WebView.isDestroyed` 不存在**：MainActivity 三处写 `webView.isDestroyed` 做销毁守卫，Kotlin 报 `Unresolved reference: isDestroyed`。`isDestroyed` 是 `Activity` 的方法，不是 `View`/`WebView` 的。
+   - **修法**：MainActivity 加 `private var webViewDestroyed = false`，`onDestroy` 里置 `true`，三处改用该标志位。
+
+3. **CI 把真实错误吞了**（比 bug 更坑）：原 `build.yml` 用 `gradle ... > build.log 2>&1` 且 `set -e`，gradle 失败即中止，build.log 内容不在步骤日志里；而 GitHub 的 job 日志 / artifacts 都存 Azure blob，**沙箱网络访问被拦，curl 下载 302 跳转到 `*.blob.core.windows.net` 全部拿不到**（这印证了之前"Azure 日志走评论通道"的判断）。
+   - **修法（关键）**：
+     - 编译步骤改为 `set +e; gradle ... > build.log 2>&1; CODE=$?; set -e; tail -n 220 build.log; exit $CODE`，把错误末尾打进步骤日志。
+     - "上报编译错误"步骤 `if` 从 `steps.build.outcome == 'failure'`（对 `exit $CODE` 退出的 multi-line 脚本判定失效，步骤被 skip）改为 **`if: failure()`**（只要前面有任一步失败即触发）。
+     - 该步骤把 `build.log` 关键行 POST 成**提交评论**（走 `api.github.com`，沙箱可达！），远程 `curl` 读 `commits/{sha}/comments` 即可拿到真实错误。
+     - 顺带 `if: always()` 上传 `build.log` 产物（虽然沙箱下不了，但用户网页端能看）。
+   - **教训**：在沙箱里排 CI，错误出口必须走 `api.github.com`（评论/status），别指望 Azure 日志/产物。
+
+**排错流程（已验证可用）**：poll `actions/runs?per_page=1` 拿状态 → 失败则 `commits/{sha}/comments` 读提交评论里的真实错误 → 本地改 → 再推再跑。PAT 用完立刻 `git remote set-url` 抹除，本地无明文残留。
+
+**当前可下载产物**：`li-android-li-v1.0.0-run20`（9a300a3 成功，约 3.87MB）。
