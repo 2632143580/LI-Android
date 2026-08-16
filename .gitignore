@@ -1,0 +1,56 @@
+# Built application files
+*.apk
+*.aar
+*.ap_
+*.aab
+
+# Files for the ART/Dalvik VM
+*.dex
+
+# Java class files
+*.class
+
+# Generated files
+bin/
+gen/
+out/
+release/
+
+# Gradle files (keep gradle-wrapper.jar & scripts; ignore only caches)
+.gradle/
+build/
+
+# Local configuration (machine-specific SDK path)
+local.properties
+
+# Log/OS files
+*.log
+.DS_Store
+Thumbs.db
+
+# IDE / editor
+.idea/
+*.iml
+.vscode/
+.project
+.classpath
+.cxx/
+*.keystore
+*.jks
+
+# Captures
+captures/
+
+# Android Studio / IntelliJ
+.navigation/
+*.iml
+modules.xml
+workspace.xml
+
+# External native build
+.externalNativeBuild/
+.cxx/
+
+# Note: app/src/main/assets/index.html is intentionally NOT ignored —
+# when you bundle LI, that file should be committed so the APK is self-contained.
+# Until then the folder only contains README.txt (placeholder).

@@ -1,0 +1,11 @@
+{
+  "image": "mcr.microsoft.com/devcontainers/android:0-11",
+  "features": {
+    "ghcr.io/devcontainers/features/android-cli:1": {
+      "version": "latest",
+      "installEmulator": false,
+      "gradleVersion": "8.9"
+    }
+  },
+  "postCreateCommand": "yes | sdkmanager --licenses || true"
+}
