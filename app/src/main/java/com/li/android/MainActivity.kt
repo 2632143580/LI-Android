@@ -22,8 +22,10 @@ import androidx.core.content.ContextCompat
  * 关键机制：
  *   1. 注入 AndroidBridge（JS → Native 桥），让网页能回传"用户发消息"事件
  *   2. 页面加载完成后注入 MutationObserver 脚本，监听 .chat-bubble--user 出现
- *   3. 注册 WorkManager 周期任务（推送调度）
- *   4. 请求通知权限 + 电池优化豁免
+ *   3. 注入「配置同步 + 数据面板」脚本（写入 localStorage 时严格幂等，且最多 reload 2 次，杜绝闪烁死循环）
+ *   4. 注册 WorkManager 周期任务（推送调度）
+ *   5. 请求通知权限 + 电池优化豁免
+ *   6. 注册 AppBus.refreshStats，供设置页「刷新」重新统计
  */
 class MainActivity : AppCompatActivity() {
 
@@ -34,30 +36,33 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        // 注册后台推送任务（幂等，重复调用只替换）
         PushScheduler.enqueue(this)
 
-        val prefs = AppPreferences(this)
-        bridge = AndroidBridge(this) { AppPreferences(this) }
+        // 用 applicationContext，避免 WebView/桥持有 Activity 导致泄漏
+        bridge = AndroidBridge(applicationContext) { AppPreferences(this) }
 
         webView = findViewById(R.id.webview)
         webView.settings.javaScriptEnabled = true
         webView.settings.domStorageEnabled = true
-
-        // 注入 JS → Native 桥接对象（网页端通过 window.AndroidBridge.onUserMessage() 调用）
         webView.addJavascriptInterface(bridge, "AndroidBridge")
 
         webView.webViewClient = object : WebViewClient() {
-            // 页面加载完毕后注入 DOM 观察器脚本（不修改 LI 源码）
             override fun onPageFinished(view: WebView, url: String) {
                 super.onPageFinished(view, url)
-                injectChatObserver(view)
-                injectConfigScript(view)
+                // 只在本体文档（LI 入口）注入，避免子框架/about:blank 误触发
+                if (url == "file:///android_asset/index.html") {
+                    injectChatObserver(view)
+                    injectConfigScript(view)
+                }
             }
         }
 
-        // LI 单文件产物放 assets/index.html，离线加载，不联网
         webView.loadUrl("file:///android_asset/index.html")
+
+        // 设置页点「刷新」时，重新向 WebView 注入统计脚本，拿到最新 LI 存储统计
+        AppBus.refreshStats = {
+            runOnUiThread { if (!webView.isDestroyed) injectConfigScript(webView) }
+        }
 
         findViewById<Button>(R.id.btnSettings).setOnClickListener {
             startActivity(Intent(this, SettingsActivity::class.java))
@@ -67,43 +72,35 @@ class MainActivity : AppCompatActivity() {
         requestIgnoreBatteryOptimizations()
     }
 
+    override fun onDestroy() {
+        AppBus.refreshStats = null
+        super.onDestroy()
+    }
+
     /**
-     * 向 LI 网页注入一段不可见的 JS 脚本。
-     * 脚本功能：用 MutationObserver 监听 DOM 变更，
-     * 当检测到新的 .chat-bubble--user（用户消息气泡）出现时，
-     * 调用 window.AndroidBridge.onUserMessage() 通知原生层"用户刚发了消息"。
-     *
-     * 为什么用注入而非改 LI 源码：
-     *   - LI 的 index.html 是构建产物，每次重新构建会覆盖手动修改
-     *   - 注入方式与 LI 版本解耦——只要气泡类名不变就能工作
-     *   - 用户不需要维护两份 HTML（一份给浏览器、一份给 App）
+     * 向 LI 网页注入监听脚本（不修改 LI 源码）：
+     * MutationObserver 监听 .chat-bubble--user，或兜底拦截 fetch POST /completions。
      */
     private fun injectChatObserver(webView: WebView) {
-        // language=JavaScript
+        if (webView.isDestroyed) return
         val js = """
             (function() {
                 if (window.__liBridgeInjected) return;
                 window.__liBridgeInjected = true;
 
-                // 防抖：同一秒内多次 DOM 变更只触发一次桥接调用
                 var lastReported = 0;
                 function reportIfNew() {
                     var now = Date.now();
                     if (now - lastReported < 1000) return;
                     lastReported = now;
-                    try {
-                        window.AndroidBridge.onUserMessage();
-                    } catch(e) {
-                        // AndroidBridge 不可用时静默失败（如在普通浏览器中打开）
-                    }
+                    try { window.AndroidBridge.onUserMessage(); } catch(e) {}
                 }
 
-                // 策略1：MutationObserver 监听全局 DOM 新增节点
                 var observer = new MutationObserver(function(mutations) {
                     for (var i = 0; i < mutations.length; i++) {
                         var added = mutations[i].addedNodes;
                         for (var j = 0; j < added.length; j++) {
-                            if (added[j].nodeType === 1 && // Element node
+                            if (added[j].nodeType === 1 &&
                                 (added[j].matches && added[j].matches('.chat-bubble--user') ||
                                  added[j].querySelector && added[j].querySelector('.chat-bubble--user'))) {
                                 reportIfNew();
@@ -113,17 +110,12 @@ class MainActivity : AppCompatActivity() {
                 });
                 observer.observe(document.body || document.documentElement, { childList: true, subtree: true });
 
-                // 策略2（兜底）：拦截 fetch 请求中的聊天发送
-                // LI 用 sendMessage() → fetch(post /v1/chat/completions) 发送消息
-                // 通过监听 fetch 的 POST 请求来捕获用户主动发起的对话
                 var origFetch = window.fetch;
                 window.fetch = function() {
                     var args = arguments;
                     var url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url) || '';
-                    // 只关心 POST 到 LLM 接口的请求（说明用户在发消息）
                     if (args[1] && args[1].method === 'POST' &&
-                        (url.indexOf('/chat/completions') !== -1 ||
-                         url.indexOf('/completions') !== -1)) {
+                        (url.indexOf('/chat/completions') !== -1 || url.indexOf('/completions') !== -1)) {
                         reportIfNew();
                     }
                     return origFetch.apply(this, args);
@@ -133,48 +125,16 @@ class MainActivity : AppCompatActivity() {
         webView.evaluateJavascript(js, null)
     }
 
-    // Android 13+ 必须用户点允许才能弹通知
-    private fun requestPostNotificationPermission() {
-        if (Build.VERSION.SDK_INT >= 33) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
-                != PackageManager.PERMISSION_GRANTED
-            ) {
-                ActivityCompat.requestPermissions(
-                    this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1
-                )
-            }
-        }
-    }
-
-    // 关键：不申请电池豁免，国产手机分分钟把后台任务杀掉，推送就失灵
-    private fun requestIgnoreBatteryOptimizations() {
-        val pm = getSystemService(POWER_SERVICE) as PowerManager
-        if (!pm.isIgnoringBatteryOptimizations(packageName)) {
-            startActivity(
-                Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
-                    .setData(Uri.parse("package:$packageName"))
-            )
-        }
-    }
-
-    @Deprecated("使用 OnBackPressedDispatcher")
-    override fun onBackPressed() {
-        if (webView.canGoBack()) webView.goBack() else super.onBackPressed()
-    }
-
     /**
-     * 向 LI 网页注入「配置同步 + 数据面板」脚本（不修改 LI 源码，与版本解耦）。
+     * 配置同步 + 数据面板脚本（不修改 LI 源码，与版本解耦）。
      *
-     * 做四件事：
-     *   1) 统计 LI 的 localStorage 占用 / 聊天节点数，回传给原生（数据面板显示用）。
-     *   2) 执行 pendingWebAction（clear_chat / reset_all / export）—— 设置页写入，这里落地。
-     *   3) 若开启「填一次注入两边」，把推送 LLM 写进 LI 的 localStorage，前台聊天免再填。
-     *   4) 若填了 mimo 云端语音 Key，写进 LI 的 ttsCloud 并切到云端语音源。
-     *
-     * 原生配置以 JSON 直接内联进脚本（var NATIVE = {...}），避免字符串转义问题。
-     * 写入 localStorage 后如需让 LI 立即生效会 location.reload()；靠「内容是否一致」做幂等防死循环。
+     * 防闪烁设计（关键）：
+     *   - 每次写入 localStorage 前先「全量比对」，只有不一致才写 + reload（幂等）。
+     *   - sessionStorage 计数上限 2：即便比对逻辑有疏漏，reload 也绝不会超过 2 次，
+     *     从根本上杜绝「一直闪、无法操作」的死循环。
      */
     private fun injectConfigScript(webView: WebView) {
+        if (webView.isDestroyed) return
         val prefs = AppPreferences(this)
         val nativeConfig = JSONObject().apply {
             put("syncToWeb", prefs.syncToWeb)
@@ -191,11 +151,15 @@ class MainActivity : AppCompatActivity() {
             })
         }.toString()
 
-        // language=JavaScript
         val js = """
             (function() {
                 if (window.__liCfgInjected) return;
                 window.__liCfgInjected = true;
+
+                // 防闪烁硬上限：最多 reload 2 次
+                var rn = parseInt(sessionStorage.getItem('liReloads') || '0', 10);
+                if (rn >= 2) return;
+                sessionStorage.setItem('liReloads', String(rn + 1));
 
                 var NATIVE = $nativeConfig;
                 var STORAGE_KEY = 'liChatData_v2';
@@ -231,7 +195,7 @@ class MainActivity : AppCompatActivity() {
                     })); } catch (e) {}
                 })();
 
-                // 2) 待执行动作
+                // 2) 待执行动作（一次性，执行后由 onWebActionDone 清除标记）
                 if (NATIVE.pendingAction === 'clear_chat') {
                     var d = readData() || { settings: {} };
                     d.chatTree = { role: 'system', content: '', children: [] };
@@ -252,7 +216,7 @@ class MainActivity : AppCompatActivity() {
                     try { window.AndroidBridge.onWebActionDone(); } catch (e) {}
                 }
 
-                // 3) 填一次注入两边：把推送 LLM 同步给 LI 前台聊天
+                // 3) 填一次注入两边：仅当与 LI 现有设置「不一致」才写 + reload（幂等）
                 if (NATIVE.syncToWeb && NATIVE.push && NATIVE.push.apiKey) {
                     var d = readData();
                     if (d && d.settings) {
@@ -266,20 +230,55 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
 
-                // 4) mimo 云端语音
+                // 4) mimo 云端语音：同样先全量比对，不一致才写 + reload（幂等，杜绝闪烁死循环）
                 if (NATIVE.tts && NATIVE.tts.apiKey) {
                     var d = readData();
                     if (d && d.settings) {
-                        d.settings.ttsSource = 'cloud';
-                        d.settings.ttsCloud = d.settings.ttsCloud || {};
-                        d.settings.ttsCloud.apiKey = NATIVE.tts.apiKey;
-                        d.settings.ttsCloud.baseUrl = NATIVE.tts.baseUrl || 'https://api.xiaomimimo.com/v1';
-                        d.settings.ttsCloud.model = NATIVE.tts.model || 'mimo-v2.5-tts';
-                        writeData(d); location.reload(); return;
+                        var s = d.settings;
+                        var tc = s.ttsCloud || {};
+                        var wantBase = NATIVE.tts.baseUrl || 'https://api.xiaomimimo.com/v1';
+                        var wantModel = NATIVE.tts.model || 'mimo-v2.5-tts';
+                        if (s.ttsSource !== 'cloud' || tc.apiKey !== NATIVE.tts.apiKey ||
+                            (tc.baseUrl || 'https://api.xiaomimimo.com/v1') !== wantBase ||
+                            (tc.model || 'mimo-v2.5-tts') !== wantModel) {
+                            s.ttsSource = 'cloud';
+                            s.ttsCloud = tc;
+                            tc.apiKey = NATIVE.tts.apiKey;
+                            tc.baseUrl = wantBase;
+                            tc.model = wantModel;
+                            writeData(d); location.reload(); return;
+                        }
                     }
                 }
             })();
         """
         webView.evaluateJavascript(js, null)
+    }
+
+    private fun requestPostNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= 33) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED
+            ) {
+                ActivityCompat.requestPermissions(
+                    this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1
+                )
+            }
+        }
+    }
+
+    private fun requestIgnoreBatteryOptimizations() {
+        val pm = getSystemService(POWER_SERVICE) as PowerManager
+        if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+            startActivity(
+                Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                    .setData(Uri.parse("package:$packageName"))
+            )
+        }
+    }
+
+    @Deprecated("使用 OnBackPressedDispatcher")
+    override fun onBackPressed() {
+        if (webView.canGoBack()) webView.goBack() else super.onBackPressed()
     }
 }

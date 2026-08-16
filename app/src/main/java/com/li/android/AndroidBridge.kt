@@ -22,19 +22,15 @@ import java.util.concurrent.atomic.AtomicLong
  * 安全说明：
  *   @JavascriptInterface 限制只有带此注解的方法才能被 JS 调用。
  *   不暴露任何敏感能力（无任意文件读写、无 Intent 启动）。
+ *   这里统一用 applicationContext，避免持有 Activity 导致内存泄漏 / 销毁后误用。
  */
 class AndroidBridge(
-    private val ctx: Context,
+    ctx: Context,
     private val prefsProvider: () -> AppPreferences
 ) {
-
-    /** 最近一次 onUserMessage 的 epoch 毫秒（防抖用） */
+    private val appCtx = ctx.applicationContext
     private val lastReported = AtomicLong(0L)
 
-    /**
-     * 网页端检测到用户发出聊天消息时调用，更新 lastChatEpochMs。
-     * 同一秒内重复调用忽略。
-     */
     @JavascriptInterface
     fun onUserMessage() {
         val now = System.currentTimeMillis()
@@ -44,38 +40,28 @@ class AndroidBridge(
         prefsProvider().lastChatEpochMs = now
     }
 
-    /**
-     * 网页侧注入脚本计算好 LI 存储统计后回传。
-     * json 形如 {"totalBytes":N,"keyCount":N,"chatNodes":N,"ttsSource":"system|cloud","ttsCloudConfigured":bool}
-     */
     @JavascriptInterface
     fun onStorageStats(json: String?) {
         if (json.isNullOrBlank()) return
         prefsProvider().storageStatsJson = json
     }
 
-    /** 网页侧动作（清空/重置/导出）执行完毕，清除队列标记，避免下次加载重复执行。 */
     @JavascriptInterface
     fun onWebActionDone() {
         prefsProvider().pendingWebAction = ""
     }
 
-    /** 清空 App 原生配置——与网页侧 removeItem 配合完成「重置全部」。 */
     @JavascriptInterface
     fun resetAllNative() {
         prefsProvider().clearAll()
     }
 
-    /**
-     * 导出聊天存档为 JSON 文件，写到 App 私有外部目录（PC 经 USB 可读取）。
-     * 返回写入路径给网页无意义，故仅存本地供设置页展示。
-     */
     @JavascriptInterface
     fun exportChat(json: String?) {
         if (json.isNullOrBlank()) return
         try {
-            val dir = ctx.getExternalFilesDir(null)
-                ?: File(ctx.filesDir, "export")
+            val dir = appCtx.getExternalFilesDir(null)
+                ?: File(appCtx.filesDir, "export")
             if (!dir.exists()) dir.mkdirs()
             val ts = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
             val file = File(dir, "li_chat_export_$ts.json")

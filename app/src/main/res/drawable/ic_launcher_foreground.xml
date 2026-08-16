@@ -1,0 +1,11 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group android:name="li_mark" android:fillColor="#FFFFFF">
+        <rect android:x="33" android:y="30" android:width="12" android:height="56" android:rx="6" />
+        <circle android:cx="71" android:cy="38" android:r="8" />
+        <rect android:x="65" android:y="48" android:width="12" android:height="38" android:rx="6" />
+    </group>
+</vector>

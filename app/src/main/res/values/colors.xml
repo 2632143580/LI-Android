@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 品牌色（图标背景 + 强调色） -->
+    <color name="brand">#4F7CFF</color>
+    <color name="ic_launcher_background">#4F7CFF</color>
+
+    <!-- 深色主题语义色（LI 是深色工具，设置页统一深色） -->
+    <color name="bg">#0E0F13</color>
+    <color name="surface">#16181D</color>
+    <color name="surface_variant">#1F2228</color>
+    <color name="text_primary">#ECEDEF</color>
+    <color name="text_secondary">#9AA0A8</color>
+    <color name="divider">#2A2D34</color>
+
+    <!-- 危险操作 -->
+    <color name="danger">#FF5A5F</color>
+    <color name="danger_bg">#2A1416</color>
+</resources>
