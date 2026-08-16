@@ -1,6 +1,8 @@
 package com.li.android
 
 import android.Manifest
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -35,22 +37,42 @@ class SettingsActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_settings)
-        prefs = AppPreferences(this)
-        tvStats = findViewById(R.id.tvStats)
+        try {
+            setContentView(R.layout.activity_settings)
+            prefs = AppPreferences(this)
+            tvStats = findViewById(R.id.tvStats)
 
-        // 顶部应用栏 + 返回
-        val toolbar = findViewById<Toolbar>(R.id.toolbar)
-        setSupportActionBar(toolbar)
-        supportActionBar?.setDisplayHomeAsUpEnabled(true)
+            // 顶部应用栏 + 返回
+            val toolbar = findViewById<Toolbar>(R.id.toolbar)
+            setSupportActionBar(toolbar)
+            supportActionBar?.setDisplayHomeAsUpEnabled(true)
 
-        bindSwitches()
-        bindInputs()
-        bindDataPanel()
-        bindStatus()
-        bindActions()
-        showVersions()
-        showStats()
+            bindSwitches()
+            bindInputs()
+            bindDataPanel()
+            bindStatus()
+            bindActions()
+            showVersions()
+            showStats()
+        } catch (e: Exception) {
+            // 不再静默闪退：直接把异常弹出来，支持一键复制发给开发者
+            AlertDialog.Builder(this)
+                .setTitle("设置页打开失败（已捕获异常）")
+                .setMessage("${e.javaClass.simpleName}: ${e.message}\n\n${e.stackTraceToString().take(1500)}")
+                .setPositiveButton("复制错误") { _, _ -> copyText(e.stackTraceToString()) }
+                .setNegativeButton("关闭", null)
+                .show()
+        }
+    }
+
+    private fun copyText(text: String) {
+        try {
+            val cm = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+            cm.setPrimaryClip(ClipData.newPlainText("li-crash", text))
+            Toast.makeText(this, "已复制，可发给开发者", Toast.LENGTH_LONG).show()
+        } catch (_: Exception) {
+            Toast.makeText(this, "复制失败，请手动记录", Toast.LENGTH_LONG).show()
+        }
     }
 
     override fun onSupportNavigateUp(): Boolean {

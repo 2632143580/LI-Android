@@ -12,6 +12,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Button
 import org.json.JSONObject
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -71,6 +72,28 @@ class MainActivity : AppCompatActivity() {
 
         requestPostNotificationPermission()
         requestIgnoreBatteryOptimizations()
+
+        // 启动时若有上次崩溃日志，弹出展示并支持一键复制（缩短真机排错链路）
+        LiApplication.takeLastCrash(this)?.let { showCrashDialog(it) }
+    }
+
+    private fun showCrashDialog(text: String) {
+        AlertDialog.Builder(this)
+            .setTitle("上次运行时崩溃（已捕获）")
+            .setMessage(text.take(4000))
+            .setPositiveButton("复制错误") { _, _ -> copyText(text) }
+            .setNegativeButton("关闭", null)
+            .show()
+    }
+
+    private fun copyText(text: String) {
+        try {
+            val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            cm.setPrimaryClip(android.content.ClipData.newPlainText("li-crash", text))
+            android.widget.Toast.makeText(this, "已复制，可发给开发者", android.widget.Toast.LENGTH_LONG).show()
+        } catch (_: Exception) {
+            android.widget.Toast.makeText(this, "复制失败，请手动记录", android.widget.Toast.LENGTH_LONG).show()
+        }
     }
 
     override fun onDestroy() {
