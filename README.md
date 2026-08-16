@@ -69,17 +69,35 @@ LI 的网页本体通过 WebView 加载，放在 `app/src/main/assets/index.html
 
 ## 怎么构建出 APK（本机零安装）
 
-推荐用 **GitHub Codespaces**（浏览器里编译，电脑不装任何东西）：
+代码已自带 `.github/workflows/build.yml`：推送到 `main` 后，GitHub 会在云端自动编译并产出 APK 供下载。**你全程不用开任何终端。**
 
-1. 把这个 `LI-Android` 文件夹推到你的 GitHub 仓库。
-2. 在仓库点「Code → Codespaces → Create codespace」。
+### 主路径：GitHub Actions（推荐，已验证可行）
+
+1. 把代码推到 `main`（本工程已包含 workflow，推上去即自动触发构建）。
+2. 打开仓库页面 → 点顶部 **Actions** 标签。
+3. 你会看到一条名为 **「Build LI Android APK」** 的运行记录：
+   - 黄色圆点 = 正在编译（首次约 10–15 分钟，要下载 SDK+依赖）；
+   - 绿色对勾 = 成功。
+4. 点进这条记录 → 底部 **Artifacts（产物）** 里有一个 **`app-debug`** → 下载。
+5. 解压得到 `app-debug.apk`，传到手机安装（手机设置里允许「未知来源」安装包）。
+6. 首次打开：允许通知、允许忽略电池优化；点「设置」填 LLM 的 Key / 模型 / 定时 / 闲置阈值。
+
+> 想重新构建？在 Actions 页面点 **「Build LI Android APK」→ Run workflow** 即可手动触发，
+> 不必再推代码。
+
+### 备选：GitHub Codespaces（浏览器开终端编译）
+
+> 实测 Codespaces 拉取 Android 镜像偶尔会卡在「正在打开远程……」长时间不动。若遇到，
+> 直接用上面的 Actions 路径，不必死磕。
+
+1. 仓库点「Code → Codespaces → Create codespace」。
+2. 等编辑器加载完（底部出现可用终端，不再是「正在打开远程」）。
 3. 终端执行（Dev 容器已带 Android SDK + Gradle）：
    ```bash
    yes | sdkmanager --licenses
    gradle assembleDebug
    ```
 4. 产物在 `app/build/outputs/apk/debug/app-debug.apk`，下载到手机安装。
-5. 首次打开：允许通知、允许忽略电池优化；点「设置」填 LLM 的 Key / 模型 / 定时 / 闲置阈值。
 
 > 版本说明：本工程用的 AGP 8.5.2 / Kotlin 1.9.24 / WorkManager 2.9.0 / targetSdk 34 是编写时的较新稳定版。
 > 若未来构建报版本错，按报错提示把版本号往上提一档即可（这是安卓生态常态，不是 bug）。
