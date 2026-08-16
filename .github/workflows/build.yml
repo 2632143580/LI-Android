@@ -38,9 +38,13 @@ jobs:
           cp dist/index.html ../app/src/main/assets/index.html
           echo "LI 构建完成，已覆盖 assets/index.html"
 
-      - name: 读取 LI 版本号
+      - name: 读取 LI 版本号并写入 assets
         id: li-version
-        run: echo "version=$(node -p "require('./li-src/package.json').version")" >> "$GITHUB_OUTPUT"
+        run: |
+          VERSION=$(node -p "require('./li-src/package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo -n "$VERSION" > app/src/main/assets/li_version.txt
+          echo "LI 版本 $VERSION 已写入 assets/li_version.txt"
 
       - name: 安装 JDK 17
         uses: actions/setup-java@v4
