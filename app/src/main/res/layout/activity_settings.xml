@@ -45,7 +45,8 @@
                     android:textSize="16sp"
                     android:textColor="@color/text_primary"
                     android:layout_weight="1"
-                    android:layout_width="0dp" />
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content" />
                 <Switch
                     android:id="@+id/swEnabled"
                     android:contentDescription="主动推送总开关"
@@ -99,14 +100,14 @@
             <TextView android:text="推送行为" android:textSize="14sp" android:textColor="@color/text_secondary" android:layout_width="match_parent" android:layout_height="wrap_content" />
 
             <LinearLayout android:orientation="horizontal" android:gravity="center_vertical" android:layout_width="match_parent" android:layout_height="wrap_content">
-                <TextView android:text="A 定时陪伴" android:textSize="15sp" android:textColor="@color/text_primary" android:layout_weight="1" android:layout_width="0dp" />
+                <TextView android:text="A 定时陪伴" android:textSize="15sp" android:textColor="@color/text_primary" android:layout_weight="1" android:layout_width="0dp" android:layout_height="wrap_content" />
                 <Switch android:id="@+id/swA" android:contentDescription="A 定时陪伴开关" android:layout_width="wrap_content" android:layout_height="wrap_content" />
             </LinearLayout>
             <TextView android:text="按下面时刻主动发一条陪伴消息。" android:textSize="12sp" android:textColor="@color/text_secondary" android:layout_width="match_parent" android:layout_height="wrap_content" />
             <EditText android:id="@+id/etSchedule" android:hint="逗号分隔，如 09:00,20:00" android:inputType="text" android:textColor="@color/text_primary" android:layout_marginTop="4dp" android:layout_width="match_parent" android:layout_height="wrap_content" />
 
             <LinearLayout android:orientation="horizontal" android:gravity="center_vertical" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp">
-                <TextView android:text="B 久未互动" android:textSize="15sp" android:textColor="@color/text_primary" android:layout_weight="1" android:layout_width="0dp" />
+                <TextView android:text="B 久未互动" android:textSize="15sp" android:textColor="@color/text_primary" android:layout_weight="1" android:layout_width="0dp" android:layout_height="wrap_content" />
                 <Switch android:id="@+id/swB" android:contentDescription="B 久未互动开关" android:layout_width="wrap_content" android:layout_height="wrap_content" />
             </LinearLayout>
             <TextView android:text="超过阈值小时没聊天，主动找你说话（防刷屏已内置）。" android:textSize="12sp" android:textColor="@color/text_secondary" android:layout_width="match_parent" android:layout_height="wrap_content" />
@@ -180,11 +181,11 @@
             <TextView android:text="状态 / 权限" android:textSize="14sp" android:textColor="@color/text_secondary" android:layout_width="match_parent" android:layout_height="wrap_content" />
 
             <LinearLayout android:orientation="horizontal" android:gravity="center_vertical" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp">
-                <TextView android:id="@+id/tvNotif" android:text="通知权限：检测中…" android:textSize="13sp" android:textColor="@color/text_primary" android:layout_weight="1" android:layout_width="0dp" />
+                <TextView android:id="@+id/tvNotif" android:text="通知权限：检测中…" android:textSize="13sp" android:textColor="@color/text_primary" android:layout_weight="1" android:layout_width="0dp" android:layout_height="wrap_content" />
                 <Button android:id="@+id/btnOpenNotif" android:text="去开启" android:backgroundTint="@color/surface_variant" android:textColor="@color/text_primary" android:layout_width="wrap_content" android:layout_height="wrap_content" />
             </LinearLayout>
             <LinearLayout android:orientation="horizontal" android:gravity="center_vertical" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp">
-                <TextView android:id="@+id/tvBattery" android:text="电池豁免：检测中…" android:textSize="13sp" android:textColor="@color/text_primary" android:layout_weight="1" android:layout_width="0dp" />
+                <TextView android:id="@+id/tvBattery" android:text="电池豁免：检测中…" android:textSize="13sp" android:textColor="@color/text_primary" android:layout_weight="1" android:layout_width="0dp" android:layout_height="wrap_content" />
                 <Button android:id="@+id/btnOpenBattery" android:text="去开启" android:backgroundTint="@color/surface_variant" android:textColor="@color/text_primary" android:layout_width="wrap_content" android:layout_height="wrap_content" />
             </LinearLayout>
             <Button android:id="@+id/btnTestPush" android:text="发一条测试推送" android:layout_marginTop="8dp" android:backgroundTint="@color/surface_variant" android:textColor="@color/text_primary" android:layout_width="match_parent" android:layout_height="wrap_content" />
