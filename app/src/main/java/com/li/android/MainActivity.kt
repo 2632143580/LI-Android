@@ -11,6 +11,7 @@ import android.provider.Settings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Button
+import android.widget.Toast
 import org.json.JSONObject
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
@@ -18,7 +19,8 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 
 /**
- * 主界面：全屏 WebView 加载 LI（assets/index.html）。
+ * 主界面：全屏 WebView 加载 LI 网页（运行时热更新：加载 app 私有 app_web 目录，
+ * 无网时回退 assets 内嵌基线）。
  *
  * 关键机制：
  *   1. 注入 AndroidBridge（JS → Native 桥），让网页能回传"用户发消息"事件
@@ -27,11 +29,13 @@ import androidx.core.content.ContextCompat
  *   4. 注册 WorkManager 周期任务（推送调度）
  *   5. 请求通知权限 + 电池优化豁免
  *   6. 注册 AppBus.refreshStats，供设置页「刷新」重新统计
+ *   7. 启动后后台静默检查网页更新（WebBundleManager 热更新）
  */
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
     private lateinit var bridge: AndroidBridge
+    private lateinit var webBundle: WebBundleManager
     private var webViewDestroyed = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -42,6 +46,8 @@ class MainActivity : AppCompatActivity() {
 
         // 用 applicationContext，避免 WebView/桥持有 Activity 导致泄漏
         bridge = AndroidBridge(applicationContext) { AppPreferences(this) }
+        // 网页包热更新管理器：确保 app_web 有网页（无则复制 assets 基线）
+        webBundle = WebBundleManager(this)
 
         webView = findViewById(R.id.webview)
         webView.settings.javaScriptEnabled = true
@@ -51,15 +57,17 @@ class MainActivity : AppCompatActivity() {
         webView.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView, url: String) {
                 super.onPageFinished(view, url)
-                // 只在本体文档（LI 入口）注入，避免子框架/about:blank 误触发
-                if (url == "file:///android_asset/index.html") {
+                // 只在 LI 入口（app_web/index.html）注入，避免子框架/about:blank 误触发
+                if (webBundle.isLiEntry(url)) {
                     injectChatObserver(view)
                     injectConfigScript(view)
                 }
             }
         }
 
-        webView.loadUrl("file:///android_asset/index.html")
+        // 确保网页存在后再加载；无网时自动用 assets 基线
+        webBundle.ensureBaseline()
+        webView.loadUrl(webBundle.indexUrl())
 
         // 设置页点「刷新」时，重新向 WebView 注入统计脚本，拿到最新 LI 存储统计
         AppBus.refreshStats = {
@@ -75,6 +83,17 @@ class MainActivity : AppCompatActivity() {
 
         // 启动时若有上次崩溃日志，弹出展示并支持一键复制（缩短真机排错链路）
         LiApplication.takeLastCrash(this)?.let { showCrashDialog(it) }
+
+        // 后台静默检查网页更新（热更新）；有更新下载完成后提示重启生效
+        webBundle.checkAndUpdate { result ->
+            if (result.updated) {
+                runOnUiThread {
+                    if (!webViewDestroyed) {
+                        Toast.makeText(this, result.message, Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+        }
     }
 
     private fun showCrashDialog(text: String) {

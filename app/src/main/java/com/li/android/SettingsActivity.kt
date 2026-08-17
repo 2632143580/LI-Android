@@ -26,7 +26,7 @@ import java.io.File
  *  - 云端语音（MiMo TTS）Key
  *  - 数据管理：位置说明 + 统计 + 导出 / 清空 / 重置（危险操作区，带确认）
  *  - 状态权限：通知 / 电池豁免 / 测试推送
- *  - 关于：应用版本 + 内置 LI 内核版本
+ *  - 关于：应用版本 + 网页内核版本（热更新）+ 检查网页更新
  *
  * 网页侧动作（清空/重置/导出）只在此写入 pendingWebAction，真正执行发生在
  * MainActivity 加载 LI 时（因为 WebView 在 MainActivity）。操作后需返回主界面生效。
@@ -34,12 +34,14 @@ import java.io.File
 class SettingsActivity : AppCompatActivity() {
     private lateinit var prefs: AppPreferences
     private lateinit var tvStats: TextView
+    private lateinit var webBundle: WebBundleManager
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         try {
             setContentView(R.layout.activity_settings)
             prefs = AppPreferences(this)
+            webBundle = WebBundleManager(this)
             tvStats = findViewById(R.id.tvStats)
 
             // 顶部应用栏 + 返回
@@ -199,13 +201,15 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
-    // ===== 保存 / 刷新（固定底栏，常驻可见）=====
+    // ===== 保存 / 刷新 + 检查网页更新（固定底栏，常驻可见）=====
     private fun bindActions() {
         findViewById<Button>(R.id.btnSave).setOnClickListener {
             save()
             toast("已保存，返回主界面后同步生效")
         }
         findViewById<Button>(R.id.btnRefresh).setOnClickListener { refresh() }
+        // 手动检查网页更新（热更新）：委托 WebBundleManager，结果回显到 tvUpdateStatus
+        findViewById<Button>(R.id.btnCheckUpdate).setOnClickListener { checkUpdate() }
     }
 
     private fun save() {
@@ -234,10 +238,24 @@ class SettingsActivity : AppCompatActivity() {
         Handler(Looper.getMainLooper()).postDelayed({ showStats() }, 1200)
     }
 
+    /** 手动检查网页更新：委托 WebBundleManager，结果回显到状态。 */
+    private fun checkUpdate() {
+        val tv = findViewById<TextView>(R.id.tvUpdateStatus)
+        tv.text = "检查中…"
+        webBundle.checkAndUpdate { result ->
+            runOnUiThread {
+                tv.text = "更新状态：${result.message}"
+                if (result.updated) toast("网页已更新，请重启 App 生效")
+            }
+        }
+    }
+
     // ===== 关于 =====
     private fun showVersions() {
         findViewById<TextView>(R.id.tvAppVersion).text = "本机应用版本：${getAppVersion()}"
-        findViewById<TextView>(R.id.tvLiVersion).text = "内置 LI 内核版本：${getLiVersion()}"
+        // 网页内核版本来自热更新已装版本（基线为 assets 内嵌版本）
+        findViewById<TextView>(R.id.tvLiVersion).text =
+            "网页内核版本：${webBundle.getInstalledVersion()}（自动热更新）"
     }
 
     private fun getAppVersion(): String = try {
