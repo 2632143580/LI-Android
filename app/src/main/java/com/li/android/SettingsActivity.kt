@@ -238,13 +238,16 @@ class SettingsActivity : AppCompatActivity() {
         Handler(Looper.getMainLooper()).postDelayed({ showStats() }, 1200)
     }
 
-    /** 手动检查网页更新：委托 WebBundleManager，结果回显到状态。 */
+    /** 手动检查网页更新：委托 WebBundleManager，结果回显到状态（含当前/最新内核与具体原因）。 */
     private fun checkUpdate() {
         val tv = findViewById<TextView>(R.id.tvUpdateStatus)
-        tv.text = "检查中…"
+        tv.text = "检查中…（联网查询 li 仓库最新 Release）"
         webBundle.checkAndUpdate { result ->
             runOnUiThread {
-                tv.text = "更新状态：${result.message}"
+                val sb = StringBuilder("更新状态：${result.message}")
+                if (result.installedVersion.isNotEmpty()) sb.append("\n当前内核：${result.installedVersion}")
+                if (result.latestVersion.isNotEmpty()) sb.append("\n最新内核：${result.latestVersion}")
+                tv.text = sb.toString()
                 if (result.updated) toast("网页已更新，请重启 App 生效")
             }
         }
@@ -255,7 +258,9 @@ class SettingsActivity : AppCompatActivity() {
         findViewById<TextView>(R.id.tvAppVersion).text = "本机应用版本：${getAppVersion()}"
         // 网页内核版本来自热更新已装版本（基线为 assets 内嵌版本）
         findViewById<TextView>(R.id.tvLiVersion).text =
-            "网页内核版本：${webBundle.getInstalledVersion()}（自动热更新）"
+            "网页内核版本：${webBundle.getInstalledVersion()}（自动热更新）\n" +
+            "更新来源：GitHub 仓库 2632143580/li 的 Release 页面\n" +
+            "（改网页只需推送仓库，App 无需重装）"
     }
 
     private fun getAppVersion(): String = try {

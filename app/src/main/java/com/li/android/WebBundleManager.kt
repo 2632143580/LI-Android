@@ -7,6 +7,7 @@ import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
 import java.io.InputStream
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
@@ -103,31 +104,33 @@ class WebBundleManager(private val context: Context) {
     /**
      * 检查并安装更新（后台线程执行，结果通过 onResult 回主线程）。
      * 网络异常/限流/无更新均安全返回，不影响当前网页使用。
+     * 结果携带 当前内核/最新内核 与具体失败原因（HTTP 状态码等），便于设置页展示。
      */
     fun checkAndUpdate(onResult: (UpdateResult) -> Unit) {
+        val installed = getInstalledVersion()
         Thread {
             try {
                 val rel = fetchLatestRelease()
                 if (rel == null) {
-                    onResult(UpdateResult(false, "暂时无法获取更新（网络/限流）"))
+                    onResult(UpdateResult(false, "暂时无法获取更新：li 仓库暂无 Release 产物", installed))
                     return@Thread
                 }
                 if (rel.id <= getInstalledReleaseId()) {
-                    onResult(UpdateResult(false, "已是最新内核 ${getInstalledVersion()}"))
+                    onResult(UpdateResult(false, "已是最新内核（${rel.version}）", installed, rel.version))
                     return@Thread
                 }
                 val ok = downloadAndInstall(rel)
                 onResult(
-                    if (ok) UpdateResult(true, "已更新到内核 ${rel.version}，重启 App 生效")
-                    else UpdateResult(false, "下载失败，下次再试")
+                    if (ok) UpdateResult(true, "已下载新内核 ${rel.version}，重启 App 生效", installed, rel.version)
+                    else UpdateResult(false, "下载失败（网络中断或文件异常），下次启动自动重试", installed, rel.version)
                 )
             } catch (e: Exception) {
-                onResult(UpdateResult(false, "更新出错：${e.message}"))
+                onResult(UpdateResult(false, "更新检查失败：${e.message ?: "未知错误"}", installed))
             }
         }.start()
     }
 
-    /** 拉取 li 仓库最新 Release 信息；无可用 Release 或限流返回 null。 */
+    /** 拉取 li 仓库最新 Release 信息；无可用 Release 返回 null，网络/HTTP 错误抛异常带状态码。 */
     private fun fetchLatestRelease(): ReleaseInfo? {
         val conn = (URL(RELEASES_API).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
@@ -137,8 +140,9 @@ class WebBundleManager(private val context: Context) {
             setRequestProperty("User-Agent", "li-android")
         }
         if (conn.responseCode != 200) {
+            val code = conn.responseCode
             conn.disconnect()
-            return null
+            throw IOException("GitHub 返回 HTTP $code（未联网或接口限流）")
         }
         val body = conn.inputStream.bufferedReader().use { it.readText() }
         conn.disconnect()
@@ -224,7 +228,11 @@ class WebBundleManager(private val context: Context) {
     /** 一次检查/更新结果。updated=true 表示已下载新版本（需重启生效）。 */
     data class UpdateResult(
         val updated: Boolean,
-        val message: String
+        val message: String,
+        /** 当前已装内核版本（基线或上次下载）。 */
+        val installedVersion: String = "",
+        /** 远端最新内核版本（检查失败时为空）。 */
+        val latestVersion: String = ""
     )
 
     companion object {
