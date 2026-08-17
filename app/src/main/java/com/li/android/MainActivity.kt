@@ -52,6 +52,11 @@ class MainActivity : AppCompatActivity() {
         webView = findViewById(R.id.webview)
         webView.settings.javaScriptEnabled = true
         webView.settings.domStorageEnabled = true
+        // 关键：Android 11(API 30)+ 默认禁止加载应用私有目录的 file:// 文件；
+        // 热更新网页位于 /data/user/0/<pkg>/app_web/index.html（普通文件路径），必须显式放行，
+        // 否则 WebView 报 net::ERR_ACCESS_DENIED（旧版加载 android_asset 内置资源不受此限制，故未暴露）。
+        // 单文件网页内 JS/CSS 已内联，无需放开 allowFileAccessFromFileURLs（保持默认 false 更安全）。
+        webView.settings.allowFileAccess = true
         webView.addJavascriptInterface(bridge, "AndroidBridge")
 
         webView.webViewClient = object : WebViewClient() {
