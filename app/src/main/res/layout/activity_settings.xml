@@ -70,16 +70,16 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content" />
             <TextView
-                android:text="App 在你不打开 LI 时，靠它生成主动推送的话。可先选下方服务商一键填好地址与模型，再补 Key；也可以直接手动输入。"
+                android:text="先选服务商（自动填接口地址），补上 Key 后点「拉取模型列表」选模型。地址是 chat/completions 完整端点，不是 baseUrl。"
                 android:textSize="12sp"
                 android:textColor="@color/text_secondary"
                 android:layout_marginTop="2dp"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content" />
 
-            <!-- 预设服务商（横向滚动，点选一键填充地址/模型，Key 需自己填） -->
+            <!-- 服务商（点选只填接口地址；模型不预填过时名，靠「拉取模型列表」拿真实列表） -->
             <TextView
-                android:text="选服务商（点选自动填地址+模型）"
+                android:text="选服务商（点选只填接口地址）"
                 android:textSize="13sp"
                 android:textColor="@color/text_primary"
                 android:layout_marginTop="10dp"
@@ -97,14 +97,44 @@
                     android:layout_height="wrap_content" />
             </HorizontalScrollView>
 
-            <TextView android:text="API Key" android:textSize="15sp" android:textColor="@color/text_primary" android:layout_marginTop="12dp" android:layout_width="match_parent" android:layout_height="wrap_content" />
-            <EditText android:id="@+id/etKey" android:hint="sk-... 或你的 LLM 密钥（不自动填，必须自己输入）" android:inputType="textPassword" android:textColor="@color/text_primary" android:layout_width="match_parent" android:layout_height="wrap_content" />
+            <TextView android:text="API Key（点右侧「显示」可查看明文）" android:textSize="15sp" android:textColor="@color/text_primary" android:layout_marginTop="12dp" android:layout_width="match_parent" android:layout_height="wrap_content" />
+            <LinearLayout
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content">
+                <EditText android:id="@+id/etKey" android:hint="sk-... 或你的 LLM 密钥" android:inputType="textPassword" android:textColor="@color/text_primary" android:layout_weight="1" android:layout_width="0dp" android:layout_height="wrap_content" />
+                <Button android:id="@+id/btnToggleKey" android:text="显示" android:backgroundTint="@color/surface_variant" android:textColor="@color/text_primary" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="8dp" />
+            </LinearLayout>
 
-            <TextView android:text="接口地址" android:textSize="15sp" android:textColor="@color/text_primary" android:layout_marginTop="12dp" android:layout_width="match_parent" android:layout_height="wrap_content" />
-            <EditText android:id="@+id/etBase" android:hint="如 https://api.openai.com/v1（选服务商自动填，可改）" android:inputType="textUri" android:textColor="@color/text_primary" android:layout_width="match_parent" android:layout_height="wrap_content" />
+            <TextView android:text="接口地址（chat/completions 完整端点）" android:textSize="15sp" android:textColor="@color/text_primary" android:layout_marginTop="12dp" android:layout_width="match_parent" android:layout_height="wrap_content" />
+            <EditText android:id="@+id/etBase" android:hint="如 https://api.deepseek.com/v1/chat/completions（选服务商自动填，可改）" android:inputType="textUri" android:textColor="@color/text_primary" android:layout_width="match_parent" android:layout_height="wrap_content" />
 
-            <TextView android:text="模型名称" android:textSize="15sp" android:textColor="@color/text_primary" android:layout_marginTop="12dp" android:layout_width="match_parent" android:layout_height="wrap_content" />
-            <EditText android:id="@+id/etModel" android:hint="如 gpt-4o-mini / deepseek-chat（选服务商自动填，可改）" android:inputType="text" android:textColor="@color/text_primary" android:layout_width="match_parent" android:layout_height="wrap_content" />
+            <!-- 拉取模型列表（行业标准：GET {地址去 /chat/completions}/models，按服务商实时拉取） -->
+            <Button
+                android:id="@+id/btnFetchModels"
+                android:text="拉取模型列表"
+                android:layout_marginTop="8dp"
+                android:backgroundTint="@color/surface_variant"
+                android:textColor="@color/text_primary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content" />
+            <TextView
+                android:id="@+id/tvModelHint"
+                android:text="点上方按钮，从该服务商实时拉取模型（需先填好地址与 Key）"
+                android:textSize="12sp"
+                android:textColor="@color/text_secondary"
+                android:layout_marginTop="2dp"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content" />
+            <LinearLayout
+                android:id="@+id/llModels"
+                android:orientation="vertical"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content" />
+
+            <TextView android:text="模型名称" android:textSize="15sp" android:textColor="@color/text_primary" android:layout_marginTop="8dp" android:layout_width="match_parent" android:layout_height="wrap_content" />
+            <EditText android:id="@+id/etModel" android:hint="从上面列表点选，或手动输入" android:inputType="text" android:textColor="@color/text_primary" android:layout_width="match_parent" android:layout_height="wrap_content" />
 
             <CheckBox
                 android:id="@+id/cbSyncWeb"
@@ -169,14 +199,21 @@
             <TextView android:text="系统语音免费、无需 Key。想用更自然的「云端语音」才填这里——这是语音服务的 Key，和上面的 LLM Key 不是一回事。填完保存后返回主界面即生效；未填的地址/模型不会覆盖你在网页里已有的配置。"
                 android:textSize="12sp" android:textColor="@color/text_secondary" android:layout_marginTop="2dp" android:layout_width="match_parent" android:layout_height="wrap_content" />
 
-            <TextView android:text="云端语音 API Key" android:textSize="15sp" android:textColor="@color/text_primary" android:layout_marginTop="12dp" android:layout_width="match_parent" android:layout_height="wrap_content" />
-            <EditText android:id="@+id/etTtsKey" android:hint="xiaomimimo 的 Key" android:inputType="textPassword" android:textColor="@color/text_primary" android:layout_width="match_parent" android:layout_height="wrap_content" />
+            <TextView android:text="云端语音 API Key（点右侧「显示」可查看明文）" android:textSize="15sp" android:textColor="@color/text_primary" android:layout_marginTop="12dp" android:layout_width="match_parent" android:layout_height="wrap_content" />
+            <LinearLayout
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content">
+                <EditText android:id="@+id/etTtsKey" android:hint="xiaomimimo 的 Key" android:inputType="textPassword" android:textColor="@color/text_primary" android:layout_weight="1" android:layout_width="0dp" android:layout_height="wrap_content" />
+                <Button android:id="@+id/btnToggleTtsKey" android:text="显示" android:backgroundTint="@color/surface_variant" android:textColor="@color/text_primary" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="8dp" />
+            </LinearLayout>
 
-            <TextView android:text="接口地址（留空=用网页已有配置）" android:textSize="15sp" android:textColor="@color/text_primary" android:layout_marginTop="12dp" android:layout_width="match_parent" android:layout_height="wrap_content" />
-            <EditText android:id="@+id/etTtsBase" android:hint="留空不覆盖，默认 xiaomimimo" android:inputType="textUri" android:textColor="@color/text_primary" android:layout_width="match_parent" android:layout_height="wrap_content" />
+            <TextView android:text="接口地址（baseUrl，完整显示；留空=用网页已有配置）" android:textSize="15sp" android:textColor="@color/text_primary" android:layout_marginTop="12dp" android:layout_width="match_parent" android:layout_height="wrap_content" />
+            <EditText android:id="@+id/etTtsBase" android:hint="完整地址如 https://api.xiaomimimo.com/v1（留空不覆盖）" android:inputType="textUri" android:textColor="@color/text_primary" android:layout_width="match_parent" android:layout_height="wrap_content" />
 
             <TextView android:text="模型（留空=用网页已有配置）" android:textSize="15sp" android:textColor="@color/text_primary" android:layout_marginTop="12dp" android:layout_width="match_parent" android:layout_height="wrap_content" />
-            <EditText android:id="@+id/etTtsModel" android:hint="留空不覆盖，默认 mimo-v2.5-tts" android:inputType="text" android:textColor="@color/text_primary" android:layout_width="match_parent" android:layout_height="wrap_content" />
+            <EditText android:id="@+id/etTtsModel" android:hint="如 mimo-v2.5-tts（留空不覆盖）" android:inputType="text" android:textColor="@color/text_primary" android:layout_width="match_parent" android:layout_height="wrap_content" />
 
             <!-- ========== 6. 数据管理 ========== -->
             <View android:layout_width="match_parent" android:layout_height="1dp" android:background="@color/divider" android:layout_marginTop="16dp" android:layout_marginBottom="8dp" />
@@ -190,29 +227,15 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content" />
 
-            <!-- 统计 + 刷新按钮（刷新谁就放在谁旁边） -->
-            <LinearLayout
-                android:orientation="horizontal"
-                android:gravity="center_vertical"
+            <!-- 统计（主界面设置按钮旁的「刷新」才是刷新 LI 网页；此处自动显示，无需按钮） -->
+            <TextView
+                android:id="@+id/tvStats"
+                android:text="存储统计：打开一次 LI 后自动统计"
+                android:textSize="13sp"
+                android:textColor="@color/text_primary"
+                android:layout_marginTop="8dp"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp">
-                <TextView
-                    android:id="@+id/tvStats"
-                    android:text="存储统计：打开一次 LI 后自动统计"
-                    android:textSize="13sp"
-                    android:textColor="@color/text_primary"
-                    android:layout_weight="1"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content" />
-                <Button
-                    android:id="@+id/btnRefreshStats"
-                    android:text="刷新"
-                    android:backgroundTint="@color/surface_variant"
-                    android:textColor="@color/text_primary"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content" />
-            </LinearLayout>
+                android:layout_height="wrap_content" />
 
             <!-- 导出（普通操作，不属于危险区） -->
             <Button

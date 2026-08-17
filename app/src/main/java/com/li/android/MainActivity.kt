@@ -74,13 +74,18 @@ class MainActivity : AppCompatActivity() {
         webBundle.ensureBaseline()
         webView.loadUrl(webBundle.indexUrl())
 
-        // 设置页点「刷新」时，重新向 WebView 注入统计脚本，拿到最新 LI 存储统计
+        // 设置页保存后重新注入统计脚本（force：绕过 __liCfgInjected 守卫；写入幂等，安全）
         AppBus.refreshStats = {
-            runOnUiThread { if (!webViewDestroyed) injectConfigScript(webView) }
+            runOnUiThread { if (!webViewDestroyed) injectConfigScript(webView, force = true) }
         }
 
         findViewById<Button>(R.id.btnSettings).setOnClickListener {
             startActivity(Intent(this, SettingsActivity::class.java))
+        }
+
+        // 刷新 LI 网页（主界面唯一刷新入口：重载 WebView，网页配置/对话状态重新从存储加载）
+        findViewById<Button>(R.id.btnRefresh).setOnClickListener {
+            if (!webViewDestroyed) webView.reload()
         }
 
         requestPostNotificationPermission()
@@ -215,11 +220,6 @@ class MainActivity : AppCompatActivity() {
                 if (!$force && window.__liCfgInjected) return;
                 window.__liCfgInjected = true;
 
-                // 防闪烁硬上限：最多 reload 2 次
-                var rn = parseInt(sessionStorage.getItem('liReloads') || '0', 10);
-                if (rn >= 2) return;
-                sessionStorage.setItem('liReloads', String(rn + 1));
-
                 var NATIVE = $nativeConfig;
                 var STORAGE_KEY = 'liChatData_v2';
 
@@ -228,6 +228,15 @@ class MainActivity : AppCompatActivity() {
                     catch (e) { return null; }
                 }
                 function writeData(d) { localStorage.setItem(STORAGE_KEY, JSON.stringify(d)); }
+                // 防闪烁（关键）：写入 localStorage 永远执行（持久化一定成功）；
+                // 只有 location.reload() 有上限（最多 2 次，杜绝闪烁死循环）。
+                // 达到上限时配置已存入存储，下次打开 LI 即生效——绝不因上限而丢弃写入。
+                function safeReload() {
+                    var rn = parseInt(sessionStorage.getItem('liReloads') || '0', 10);
+                    if (rn >= 2) return;
+                    sessionStorage.setItem('liReloads', String(rn + 1));
+                    location.reload();
+                }
                 function countNodes(n) {
                     if (!n || typeof n !== 'object') return 0;
                     var c = 1;
@@ -261,13 +270,13 @@ class MainActivity : AppCompatActivity() {
                     d.msgIdCounter = 0;
                     writeData(d);
                     try { window.AndroidBridge.onWebActionDone(); } catch (e) {}
-                    location.reload(); return;
+                    safeReload(); return;
                 }
                 if (NATIVE.pendingAction === 'reset_all') {
                     localStorage.removeItem(STORAGE_KEY);
                     try { window.AndroidBridge.resetAllNative(); } catch (e) {}
                     try { window.AndroidBridge.onWebActionDone(); } catch (e) {}
-                    location.reload(); return;
+                    safeReload(); return;
                 }
                 if (NATIVE.pendingAction === 'export') {
                     var raw = localStorage.getItem(STORAGE_KEY) || '{}';
@@ -285,7 +294,7 @@ class MainActivity : AppCompatActivity() {
                         if (s.apiKey !== NATIVE.push.apiKey) { s.apiKey = NATIVE.push.apiKey; changed = true; }
                         if (NATIVE.push.apiUrl && s.apiUrl !== NATIVE.push.apiUrl) { s.apiUrl = NATIVE.push.apiUrl; changed = true; }
                         if (NATIVE.push.model && s.model !== NATIVE.push.model) { s.model = NATIVE.push.model; changed = true; }
-                        if (changed) { writeData(d); location.reload(); return; }
+                        if (changed) { writeData(d); safeReload(); return; }
                     }
                 }
 
@@ -300,7 +309,7 @@ class MainActivity : AppCompatActivity() {
                         if (tc.apiKey !== NATIVE.tts.apiKey) { tc.apiKey = NATIVE.tts.apiKey; changed = true; }
                         if (NATIVE.tts.baseUrl && tc.baseUrl !== NATIVE.tts.baseUrl) { tc.baseUrl = NATIVE.tts.baseUrl; changed = true; }
                         if (NATIVE.tts.model && tc.model !== NATIVE.tts.model) { tc.model = NATIVE.tts.model; changed = true; }
-                        if (changed) { s.ttsCloud = tc; writeData(d); location.reload(); return; }
+                        if (changed) { s.ttsCloud = tc; writeData(d); safeReload(); return; }
                     }
                 }
             })();

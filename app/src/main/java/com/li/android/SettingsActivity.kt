@@ -11,6 +11,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.text.InputType
 import android.view.View
 import android.widget.*
 import androidx.appcompat.app.AlertDialog
@@ -20,9 +21,11 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import org.json.JSONObject
 import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
 
-/** 预设 LLM 服务商：点选一键填地址+模型，Key 手动输入。 */
-private data class LlmPreset(val name: String, val baseUrl: String, val model: String)
+/** 预设 LLM 服务商：点选只填接口地址（chat/completions 完整端点），模型由「拉取模型列表」实时获取。 */
+private data class LlmPreset(val name: String, val url: String)
 
 /**
  * 设置页：
@@ -205,22 +208,24 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
-    // ===== 保存 / 刷新 + 检查网页更新（固定底栏，常驻可见）=====
+    // ===== 保存 + 检查网页更新（固定底栏常驻；主界面设置按钮旁才是刷新 LI 网页）=====
     private fun bindActions() {
         findViewById<Button>(R.id.btnSave).setOnClickListener {
             save()
+            refreshStats() // 保存后自动重取统计（无独立刷新按钮）
             toast("已保存，返回主界面后同步生效")
         }
-        // 刷新统计：放在数据管理区 tvStats 旁边（刷新谁就放在谁旁边）
-        findViewById<Button>(R.id.btnRefreshStats).setOnClickListener { refresh() }
         // 手动检查网页更新（热更新）：委托 WebBundleManager，结果回显到 tvUpdateStatus
         findViewById<Button>(R.id.btnCheckUpdate).setOnClickListener { checkUpdate() }
         // 危险区折叠：默认收起，点击展开/收起
         findViewById<Button>(R.id.btnToggleDanger).setOnClickListener { toggleDanger() }
         // LLM 连通测试：验证推送 LLM 是否真能用
         findViewById<Button>(R.id.btnTestLlm).setOnClickListener { testLlm() }
-        // 预设服务商：点选一键填地址/模型（Key 需手动输入）
+        // 服务商：点选只填接口地址（完整 chat/completions 端点），模型靠「拉取模型列表」实时拿
         bindPresets()
+        // 拉取模型列表 + Key 眼睛
+        findViewById<Button>(R.id.btnFetchModels).setOnClickListener { fetchModels() }
+        bindKeyToggles()
         // 推送就绪状态
         bindPushStatus()
     }
@@ -243,16 +248,18 @@ class SettingsActivity : AppCompatActivity() {
         bindPushStatus()
     }
 
-    /** 预设服务商列表：点选一键填地址+模型（Key 永远手动输入，不预填）。 */
+    /**
+     * 服务商按钮：点选只填接口地址（chat/completions 完整端点，与 LI 网页同口径）。
+     * 模型绝不预填——过时模型名由「拉取模型列表」实时获取。
+     */
     private fun bindPresets() {
         val presets = listOf(
-            LlmPreset("智谱 GLM", "https://open.bigmodel.cn/api/paas/v4", "glm-4-flash"),
-            LlmPreset("DeepSeek", "https://api.deepseek.com", "deepseek-chat"),
-            LlmPreset("通义千问", "https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-plus"),
-            LlmPreset("Kimi", "https://api.moonshot.cn/v1", "moonshot-v1-8k"),
-            LlmPreset("OpenAI", "https://api.openai.com/v1", "gpt-4o-mini"),
-            LlmPreset("Ollama 本地", "http://localhost:11434/v1", "llama3"),
-            LlmPreset("自定义（手动输入）", "", "")
+            LlmPreset("智谱", "https://open.bigmodel.cn/api/paas/v4/chat/completions"),
+            LlmPreset("DeepSeek", "https://api.deepseek.com/v1/chat/completions"),
+            LlmPreset("通义千问", "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"),
+            LlmPreset("Kimi", "https://api.moonshot.cn/v1/chat/completions"),
+            LlmPreset("OpenAI", "https://api.openai.com/v1/chat/completions"),
+            LlmPreset("Ollama 本地", "http://localhost:11434/v1/chat/completions")
         )
         val container = findViewById<LinearLayout>(R.id.llPresets)
         container.removeAllViews()
@@ -270,14 +277,98 @@ class SettingsActivity : AppCompatActivity() {
             lp.setMargins(0, 0, 12, 0)
             btn.layoutParams = lp
             btn.setOnClickListener {
-                if (preset.baseUrl.isNotBlank()) {
-                    findViewById<EditText>(R.id.etBase).setText(preset.baseUrl)
-                    findViewById<EditText>(R.id.etModel).setText(preset.model)
-                }
-                toast("已填入${preset.name}地址与模型，补上 Key 即可")
+                findViewById<EditText>(R.id.etBase).setText(preset.url)
+                toast("已填入${preset.name}接口地址；补上 Key 后点「拉取模型列表」选模型")
             }
             container.addView(btn)
         }
+    }
+
+    /** 拉取模型列表（行业标准：GET {地址去 /chat/completions}/models，需 Authorization Bearer Key）。 */
+    private fun fetchModels() {
+        val base = findViewById<EditText>(R.id.etBase).text.toString().trim()
+        val key = findViewById<EditText>(R.id.etKey).text.toString().trim()
+        val tv = findViewById<TextView>(R.id.tvModelHint)
+        val container = findViewById<LinearLayout>(R.id.llModels)
+        container.removeAllViews()
+        if (base.isBlank()) { tv.text = "请先填接口地址再拉取"; return }
+        if (key.isBlank()) { tv.text = "请先填 API Key 再拉取"; return }
+        tv.text = "正在从该服务商拉取模型…"
+        Thread {
+            try {
+                var modelsUrl = base.replace("/chat/completions", "/models")
+                if (!modelsUrl.endsWith("/models")) modelsUrl = modelsUrl.trimEnd('/') + "/models"
+                val conn = (URL(modelsUrl).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    setRequestProperty("Authorization", "Bearer $key")
+                    connectTimeout = 15000
+                    readTimeout = 20000
+                }
+                if (conn.responseCode != 200) {
+                    val code = conn.responseCode
+                    conn.disconnect()
+                    runOnUiThread { tv.text = "拉取失败：HTTP $code（地址或 Key 不对？）" }
+                    return@Thread
+                }
+                val body = conn.inputStream.bufferedReader().use { it.readText() }
+                conn.disconnect()
+                val j = JSONObject(body)
+                val arr = j.optJSONArray("data") ?: j.optJSONArray("models") ?: JSONArray()
+                val names = (0 until arr.length()).mapNotNull { i ->
+                    val o = arr.optJSONObject(i) ?: return@mapNotNull null
+                    o.optString("id").ifBlank { o.optString("name") }.ifBlank { null }
+                }
+                runOnUiThread {
+                    if (names.isEmpty()) {
+                        tv.text = "未获取到模型（该服务商可能不支持此接口）"
+                        return@runOnUiThread
+                    }
+                    tv.text = "共 ${names.size} 个模型，点选填入${if (names.size > 50) "（仅显示前 50 个）" else ""}"
+                    names.take(50).forEach { name ->
+                        val btn = Button(this)
+                        btn.text = name
+                        btn.textSize = 13f
+                        btn.setAllCaps(false)
+                        btn.setBackgroundColor(ContextCompat.getColor(this, R.color.surface_variant))
+                        btn.setTextColor(ContextCompat.getColor(this, R.color.text_primary))
+                        btn.setPadding(24, 8, 24, 8)
+                        val lp = LinearLayout.LayoutParams(
+                            LinearLayout.LayoutParams.MATCH_PARENT,
+                            LinearLayout.LayoutParams.WRAP_CONTENT
+                        )
+                        lp.setMargins(0, 0, 0, 6)
+                        btn.layoutParams = lp
+                        btn.setOnClickListener {
+                            findViewById<EditText>(R.id.etModel).setText(name)
+                            tv.text = "已选模型：$name"
+                        }
+                        container.addView(btn)
+                    }
+                }
+            } catch (e: Exception) {
+                runOnUiThread { tv.text = "拉取失败：${e.message ?: "网络错误"}" }
+            }
+        }.start()
+    }
+
+    /** Key 输入框「显示/隐藏」眼睛切换（与 LI 网页同款交互）。 */
+    private fun bindKeyToggles() {
+        findViewById<Button>(R.id.btnToggleKey).setOnClickListener { toggleKeyVisibility(R.id.etKey, R.id.btnToggleKey) }
+        findViewById<Button>(R.id.btnToggleTtsKey).setOnClickListener { toggleKeyVisibility(R.id.etTtsKey, R.id.btnToggleTtsKey) }
+    }
+
+    private fun toggleKeyVisibility(editId: Int, btnId: Int) {
+        val et = findViewById<EditText>(editId)
+        val btn = findViewById<Button>(btnId)
+        val isPassword = (et.inputType and InputType.TYPE_TEXT_VARIATION_PASSWORD) != 0
+        et.inputType = if (isPassword) {
+            btn.text = "隐藏"
+            InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+        } else {
+            btn.text = "显示"
+            InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+        }
+        et.setSelection(et.text.length)
     }
 
     /** 推送就绪状态：总开关 + Key + A/B 开关 是否齐全。 */
@@ -325,8 +416,8 @@ class SettingsActivity : AppCompatActivity() {
         btn.text = if (showing) "展开危险操作区 ▾（清空 / 重置，不可恢复）" else "收起危险操作区 ▴"
     }
 
-    /** 刷新：重新检测权限/电池，并请存活的 MainActivity 重新注入统计脚本拿最新数据。 */
-    private fun refresh() {
+    /** 保存后自动重取统计（无独立刷新按钮；主界面设置按钮旁的「刷新」才是刷新 LI 网页）。 */
+    private fun refreshStats() {
         tvStats.text = "刷新中…"
         bindStatus()
         AppBus.refreshStats?.invoke()
