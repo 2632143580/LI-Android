@@ -26,12 +26,13 @@ class AppPreferences(context: Context) {
         get() = sp.getString("api_key", "") ?: ""
         set(v) = sp.edit().putString("api_key", v).apply()
 
+    // 地址/模型默认空串 =「未设置」：注入网页时不覆盖网页已有值；LlmClient 实际请求时才 fallback 默认。
     var baseUrl: String
-        get() = sp.getString("base_url", "https://api.openai.com") ?: "https://api.openai.com"
+        get() = sp.getString("base_url", "") ?: ""
         set(v) = sp.edit().putString("base_url", v).apply()
 
     var model: String
-        get() = sp.getString("model", "gpt-4o-mini") ?: "gpt-4o-mini"
+        get() = sp.getString("model", "") ?: ""
         set(v) = sp.edit().putString("model", v).apply()
 
     // 填一次注入两边：把上面的推送 LLM 同时写进 LI 网页，省得在网页再填一次
@@ -58,13 +59,13 @@ class AppPreferences(context: Context) {
         get() = sp.getString("tts_api_key", "") ?: ""
         set(v) = sp.edit().putString("tts_api_key", v).apply()
 
+    // 同上：默认空=未设置，注入时不覆盖网页已有配置。
     var ttsBaseUrl: String
-        get() = sp.getString("tts_base_url", "https://api.xiaomimimo.com/v1")
-            ?: "https://api.xiaomimimo.com/v1"
+        get() = sp.getString("tts_base_url", "") ?: ""
         set(v) = sp.edit().putString("tts_base_url", v).apply()
 
     var ttsModel: String
-        get() = sp.getString("tts_model", "mimo-v2.5-tts") ?: "mimo-v2.5-tts"
+        get() = sp.getString("tts_model", "") ?: ""
         set(v) = sp.edit().putString("tts_model", v).apply()
 
     // ===== 网页侧动作队列（设置页写，主界面加载 LI 后执行）=====

@@ -15,7 +15,10 @@ object LlmClient {
 
     fun fetchCompanionMessage(prefs: AppPreferences): String? {
         if (prefs.apiKey.isBlank()) return null
+        // 地址/模型允许留空：留空时用默认值（App 侧不存默认值，避免覆盖网页配置）
         val base = prefs.baseUrl.trim().removeSuffix("/")
+            .ifBlank { "https://api.openai.com" }
+        val model = prefs.model.trim().ifBlank { "gpt-4o-mini" }
         val url = URL("$base/v1/chat/completions")
         val conn = url.openConnection() as HttpURLConnection
         return try {
@@ -29,7 +32,7 @@ object LlmClient {
             val now = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
                 .format(System.currentTimeMillis())
             val body = JSONObject().apply {
-                put("model", prefs.model)
+                put("model", model)
                 put("messages", JSONArray().apply {
                     put(JSONObject().apply {
                         put("role", "system")

@@ -120,6 +120,16 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        // 从设置页返回时，重新同步网页配置（语音/LLM 改动立即生效，不闪屏：脚本全量比对后才写+reload）
+        if (!webViewDestroyed) {
+            webView.postDelayed({
+                if (!webViewDestroyed && webView.url != null) injectConfigScript(webView, force = true)
+            }, 300)
+        }
+    }
+
     override fun onDestroy() {
         webViewDestroyed = true
         AppBus.refreshStats = null
@@ -182,7 +192,7 @@ class MainActivity : AppCompatActivity() {
      *   - sessionStorage 计数上限 2：即便比对逻辑有疏漏，reload 也绝不会超过 2 次，
      *     从根本上杜绝「一直闪、无法操作」的死循环。
      */
-    private fun injectConfigScript(webView: WebView) {
+    private fun injectConfigScript(webView: WebView, force: Boolean = false) {
         if (webViewDestroyed) return
         val prefs = AppPreferences(this)
         val nativeConfig = JSONObject().apply {
@@ -202,7 +212,7 @@ class MainActivity : AppCompatActivity() {
 
         val js = """
             (function() {
-                if (window.__liCfgInjected) return;
+                if (!$force && window.__liCfgInjected) return;
                 window.__liCfgInjected = true;
 
                 // 防闪烁硬上限：最多 reload 2 次
@@ -265,38 +275,32 @@ class MainActivity : AppCompatActivity() {
                     try { window.AndroidBridge.onWebActionDone(); } catch (e) {}
                 }
 
-                // 3) 填一次注入两边：仅当与 LI 现有设置「不一致」才写 + reload（幂等）
+                // 3) 填一次注入两边（推送 LLM → 网页聊天 LLM）：
+                //    仅当 App 侧该字段非空才覆盖，空字段绝不碰网页已有值（不把默认值塞进网页）。
                 if (NATIVE.syncToWeb && NATIVE.push && NATIVE.push.apiKey) {
                     var d = readData();
                     if (d && d.settings) {
                         var s = d.settings;
-                        if (s.apiKey !== NATIVE.push.apiKey || s.apiUrl !== NATIVE.push.apiUrl || s.model !== NATIVE.push.model) {
-                            s.apiKey = NATIVE.push.apiKey;
-                            s.apiUrl = NATIVE.push.apiUrl;
-                            s.model = NATIVE.push.model;
-                            writeData(d); location.reload(); return;
-                        }
+                        var changed = false;
+                        if (s.apiKey !== NATIVE.push.apiKey) { s.apiKey = NATIVE.push.apiKey; changed = true; }
+                        if (NATIVE.push.apiUrl && s.apiUrl !== NATIVE.push.apiUrl) { s.apiUrl = NATIVE.push.apiUrl; changed = true; }
+                        if (NATIVE.push.model && s.model !== NATIVE.push.model) { s.model = NATIVE.push.model; changed = true; }
+                        if (changed) { writeData(d); location.reload(); return; }
                     }
                 }
 
-                // 4) mimo 云端语音：同样先全量比对，不一致才写 + reload（幂等，杜绝闪烁死循环）
+                // 4) mimo 云端语音：同样「App 空字段不覆盖网页已有配置」+ 全量比对（幂等，杜绝闪烁死循环）
                 if (NATIVE.tts && NATIVE.tts.apiKey) {
                     var d = readData();
                     if (d && d.settings) {
                         var s = d.settings;
                         var tc = s.ttsCloud || {};
-                        var wantBase = NATIVE.tts.baseUrl || 'https://api.xiaomimimo.com/v1';
-                        var wantModel = NATIVE.tts.model || 'mimo-v2.5-tts';
-                        if (s.ttsSource !== 'cloud' || tc.apiKey !== NATIVE.tts.apiKey ||
-                            (tc.baseUrl || 'https://api.xiaomimimo.com/v1') !== wantBase ||
-                            (tc.model || 'mimo-v2.5-tts') !== wantModel) {
-                            s.ttsSource = 'cloud';
-                            s.ttsCloud = tc;
-                            tc.apiKey = NATIVE.tts.apiKey;
-                            tc.baseUrl = wantBase;
-                            tc.model = wantModel;
-                            writeData(d); location.reload(); return;
-                        }
+                        var changed = false;
+                        if (s.ttsSource !== 'cloud') { s.ttsSource = 'cloud'; changed = true; }
+                        if (tc.apiKey !== NATIVE.tts.apiKey) { tc.apiKey = NATIVE.tts.apiKey; changed = true; }
+                        if (NATIVE.tts.baseUrl && tc.baseUrl !== NATIVE.tts.baseUrl) { tc.baseUrl = NATIVE.tts.baseUrl; changed = true; }
+                        if (NATIVE.tts.model && tc.model !== NATIVE.tts.model) { tc.model = NATIVE.tts.model; changed = true; }
+                        if (changed) { s.ttsCloud = tc; writeData(d); location.reload(); return; }
                     }
                 }
             })();

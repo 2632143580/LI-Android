@@ -11,6 +11,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.view.View
 import android.widget.*
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
@@ -19,6 +20,9 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import org.json.JSONObject
 import java.io.File
+
+/** 预设 LLM 服务商：点选一键填地址+模型，Key 手动输入。 */
+private data class LlmPreset(val name: String, val baseUrl: String, val model: String)
 
 /**
  * 设置页：
@@ -207,9 +211,18 @@ class SettingsActivity : AppCompatActivity() {
             save()
             toast("已保存，返回主界面后同步生效")
         }
-        findViewById<Button>(R.id.btnRefresh).setOnClickListener { refresh() }
+        // 刷新统计：放在数据管理区 tvStats 旁边（刷新谁就放在谁旁边）
+        findViewById<Button>(R.id.btnRefreshStats).setOnClickListener { refresh() }
         // 手动检查网页更新（热更新）：委托 WebBundleManager，结果回显到 tvUpdateStatus
         findViewById<Button>(R.id.btnCheckUpdate).setOnClickListener { checkUpdate() }
+        // 危险区折叠：默认收起，点击展开/收起
+        findViewById<Button>(R.id.btnToggleDanger).setOnClickListener { toggleDanger() }
+        // LLM 连通测试：验证推送 LLM 是否真能用
+        findViewById<Button>(R.id.btnTestLlm).setOnClickListener { testLlm() }
+        // 预设服务商：点选一键填地址/模型（Key 需手动输入）
+        bindPresets()
+        // 推送就绪状态
+        bindPushStatus()
     }
 
     private fun save() {
@@ -227,6 +240,89 @@ class SettingsActivity : AppCompatActivity() {
         prefs.ttsApiKey = findViewById<EditText>(R.id.etTtsKey).text.toString().trim()
         prefs.ttsBaseUrl = findViewById<EditText>(R.id.etTtsBase).text.toString().trim()
         prefs.ttsModel = findViewById<EditText>(R.id.etTtsModel).text.toString().trim()
+        bindPushStatus()
+    }
+
+    /** 预设服务商列表：点选一键填地址+模型（Key 永远手动输入，不预填）。 */
+    private fun bindPresets() {
+        val presets = listOf(
+            LlmPreset("智谱 GLM", "https://open.bigmodel.cn/api/paas/v4", "glm-4-flash"),
+            LlmPreset("DeepSeek", "https://api.deepseek.com", "deepseek-chat"),
+            LlmPreset("通义千问", "https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-plus"),
+            LlmPreset("Kimi", "https://api.moonshot.cn/v1", "moonshot-v1-8k"),
+            LlmPreset("OpenAI", "https://api.openai.com/v1", "gpt-4o-mini"),
+            LlmPreset("Ollama 本地", "http://localhost:11434/v1", "llama3"),
+            LlmPreset("自定义（手动输入）", "", "")
+        )
+        val container = findViewById<LinearLayout>(R.id.llPresets)
+        container.removeAllViews()
+        presets.forEach { preset ->
+            val btn = Button(this)
+            btn.text = preset.name
+            btn.textSize = 13f
+            btn.setBackgroundColor(ContextCompat.getColor(this, R.color.surface_variant))
+            btn.setTextColor(ContextCompat.getColor(this, R.color.text_primary))
+            btn.setPadding(24, 8, 24, 8)
+            val lp = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+            lp.setMargins(0, 0, 12, 0)
+            btn.layoutParams = lp
+            btn.setOnClickListener {
+                if (preset.baseUrl.isNotBlank()) {
+                    findViewById<EditText>(R.id.etBase).setText(preset.baseUrl)
+                    findViewById<EditText>(R.id.etModel).setText(preset.model)
+                }
+                toast("已填入${preset.name}地址与模型，补上 Key 即可")
+            }
+            container.addView(btn)
+        }
+    }
+
+    /** 推送就绪状态：总开关 + Key + A/B 开关 是否齐全。 */
+    private fun bindPushStatus() {
+        val tv = findViewById<TextView>(R.id.tvPushStatus)
+        val reasons = mutableListOf<String>()
+        if (!prefs.enabled) reasons.add("总开关已关闭")
+        if (prefs.apiKey.isBlank()) reasons.add("未填推送 LLM 的 API Key")
+        if (prefs.baseUrl.isBlank()) reasons.add("未填接口地址")
+        if (prefs.model.isBlank()) reasons.add("未填模型")
+        if (!prefs.enableA && !prefs.enableB) reasons.add("A 定时与 B 久未互动都关着")
+        tv.text = if (reasons.isEmpty()) {
+            "推送就绪状态：已就绪 ✓（满足 A/B 任一条件即触发；可点下方「测试 LLM 连通」验证）"
+        } else {
+            "推送就绪状态：未生效（" + reasons.joinToString("；") + "）"
+        }
+    }
+
+    /** 测试推送 LLM 是否连通：后台调一次接口，结果回显。 */
+    private fun testLlm() {
+        val tv = findViewById<TextView>(R.id.tvPushStatus)
+        if (prefs.apiKey.isBlank()) {
+            tv.text = "推送就绪状态：未填 API Key，先填再测"
+            return
+        }
+        tv.text = "推送就绪状态：正在测试 LLM 连通…"
+        Thread {
+            val msg = LlmClient.fetchCompanionMessage(prefs)
+            runOnUiThread {
+                tv.text = if (msg != null) {
+                    "推送就绪状态：LLM 连通成功 ✓ 示例：$msg"
+                } else {
+                    "推送就绪状态：LLM 连通失败（Key/地址/网络任一有问题，检查后重试）"
+                }
+            }
+        }.start()
+    }
+
+    /** 危险区折叠：展开/收起清空、重置操作。 */
+    private fun toggleDanger() {
+        val container = findViewById<LinearLayout>(R.id.dangerContainer)
+        val btn = findViewById<Button>(R.id.btnToggleDanger)
+        val showing = container.visibility == View.VISIBLE
+        container.visibility = if (showing) View.GONE else View.VISIBLE
+        btn.text = if (showing) "展开危险操作区 ▾（清空 / 重置，不可恢复）" else "收起危险操作区 ▴"
     }
 
     /** 刷新：重新检测权限/电池，并请存活的 MainActivity 重新注入统计脚本拿最新数据。 */
