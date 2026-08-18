@@ -61,87 +61,27 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content" />
 
-            <!-- ========== 2. 推送用 LLM ========== -->
+            <!-- ========== 2. 推送说话内容（App 只插入这句话；回复由 LI 网页模型生成） ========== -->
             <TextView
-                android:text="推送用 LLM（后台 AI 说话的脑子）"
+                android:text="推送说话内容"
                 android:textSize="14sp"
                 android:textColor="@color/text_secondary"
                 android:layout_marginTop="20dp"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content" />
             <TextView
-                android:text="先选服务商（自动填接口地址），补上 Key 后点「拉取模型列表」选模型。地址是 chat/completions 完整端点，不是 baseUrl。"
+                android:text="到点后，App 把这句话插入聊天（聊天里可见），LI 用【网页里配置的模型】回复你，App 再把 LI 的回复弹成通知。模型与 Key 在 LI 网页右上角设置里配——App 不存、也不调用任何单独的模型。"
                 android:textSize="12sp"
                 android:textColor="@color/text_secondary"
                 android:layout_marginTop="2dp"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content" />
-
-            <!-- 服务商（点选只填接口地址；模型不预填过时名，靠「拉取模型列表」拿真实列表） -->
-            <TextView
-                android:text="选服务商（点选只填接口地址）"
-                android:textSize="13sp"
+            <EditText
+                android:id="@+id/etSayText"
+                android:hint="默认：在吗？今天过得怎么样，说说话吧"
+                android:inputType="text"
                 android:textColor="@color/text_primary"
-                android:layout_marginTop="10dp"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content" />
-            <HorizontalScrollView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:scrollbars="none"
-                android:layout_marginTop="4dp">
-                <LinearLayout
-                    android:id="@+id/llPresets"
-                    android:orientation="horizontal"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content" />
-            </HorizontalScrollView>
-
-            <TextView android:text="API Key（点右侧「显示」可查看明文）" android:textSize="15sp" android:textColor="@color/text_primary" android:layout_marginTop="12dp" android:layout_width="match_parent" android:layout_height="wrap_content" />
-            <LinearLayout
-                android:orientation="horizontal"
-                android:gravity="center_vertical"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content">
-                <EditText android:id="@+id/etKey" android:hint="sk-... 或你的 LLM 密钥" android:inputType="textPassword" android:textColor="@color/text_primary" android:layout_weight="1" android:layout_width="0dp" android:layout_height="wrap_content" />
-                <Button android:id="@+id/btnToggleKey" android:text="显示" android:backgroundTint="@color/surface_variant" android:textColor="@color/text_primary" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="8dp" />
-            </LinearLayout>
-
-            <TextView android:text="接口地址（chat/completions 完整端点）" android:textSize="15sp" android:textColor="@color/text_primary" android:layout_marginTop="12dp" android:layout_width="match_parent" android:layout_height="wrap_content" />
-            <EditText android:id="@+id/etBase" android:hint="如 https://api.deepseek.com/v1/chat/completions（选服务商自动填，可改）" android:inputType="textUri" android:textColor="@color/text_primary" android:layout_width="match_parent" android:layout_height="wrap_content" />
-
-            <!-- 拉取模型列表（行业标准：GET {地址去 /chat/completions}/models，按服务商实时拉取） -->
-            <Button
-                android:id="@+id/btnFetchModels"
-                android:text="拉取模型列表"
                 android:layout_marginTop="8dp"
-                android:backgroundTint="@color/surface_variant"
-                android:textColor="@color/text_primary"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content" />
-            <TextView
-                android:id="@+id/tvModelHint"
-                android:text="点上方按钮，从该服务商实时拉取模型（需先填好地址与 Key）"
-                android:textSize="12sp"
-                android:textColor="@color/text_secondary"
-                android:layout_marginTop="2dp"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content" />
-            <LinearLayout
-                android:id="@+id/llModels"
-                android:orientation="vertical"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content" />
-
-            <TextView android:text="模型名称" android:textSize="15sp" android:textColor="@color/text_primary" android:layout_marginTop="8dp" android:layout_width="match_parent" android:layout_height="wrap_content" />
-            <EditText android:id="@+id/etModel" android:hint="从上面列表点选，或手动输入" android:inputType="text" android:textColor="@color/text_primary" android:layout_width="match_parent" android:layout_height="wrap_content" />
-
-            <CheckBox
-                android:id="@+id/cbSyncWeb"
-                android:text="填一次，两边通用：把上面的 Key 也用作 LI 前台聊天"
-                android:textSize="13sp"
-                android:textColor="@color/text_primary"
-                android:layout_marginTop="10dp"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content" />
 
@@ -149,7 +89,7 @@
             <View android:layout_width="match_parent" android:layout_height="1dp" android:background="@color/divider" android:layout_marginTop="16dp" android:layout_marginBottom="8dp" />
             <TextView android:text="推送行为" android:textSize="14sp" android:textColor="@color/text_secondary" android:layout_width="match_parent" android:layout_height="wrap_content" />
 
-            <!-- 推送就绪状态（是否生效 + 原因 + LLM 连通测试） -->
+            <!-- 推送就绪状态（是否生效 + 原因） -->
             <TextView
                 android:id="@+id/tvPushStatus"
                 android:text="推送就绪状态：计算中…"
@@ -159,8 +99,8 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content" />
             <Button
-                android:id="@+id/btnTestLlm"
-                android:text="测试 LLM 连通"
+                android:id="@+id/btnTestSay"
+                android:text="测试推送：让 li 说一句话"
                 android:layout_marginTop="6dp"
                 android:backgroundTint="@color/surface_variant"
                 android:textColor="@color/text_primary"
@@ -186,7 +126,7 @@
             <View android:layout_width="match_parent" android:layout_height="1dp" android:background="@color/divider" android:layout_marginTop="16dp" android:layout_marginBottom="8dp" />
             <TextView android:text="推送机制（全透明）" android:textSize="14sp" android:textColor="@color/text_secondary" android:layout_width="match_parent" android:layout_height="wrap_content" />
             <TextView
-                android:text="【谁在推送】App 自己，没有服务器。App 内置定时任务（WorkManager）每 15 分钟自问一次：该主动说话了吗？\n\n【怎么推送】\n每 15 分钟定时唤醒\n  ↓\nA 到点了？/ B 超时没聊了？（对应开关开启才判断）\n  ↓\n满足 → 调你填的 LLM 生成一句话\n  ↓\n发系统通知 → 记录时间（防刷屏）\n\n【触发条件】\n• A 定时：在设定时刻 ±7 分钟内，且当天该时刻还没发过\n• B 久未互动：超过阈值小时没聊天，且距上次主动推送也超过阈值小时\n\n【提示词（LLM 生成内容用的）】\n「你是 li，用户的 AI 伙伴，像朋友一样主动关心用户。不要提问，直接发一句温暖、简短（30字内）的话。」"
+                android:text="【谁在推送】App 自己，没有服务器。App 内置定时任务（WorkManager）每 15 分钟自问一次：该主动说话了吗？\n\n【怎么推送（完整流程）】\n每 15 分钟定时唤醒\n  ↓\nA 到点了？ / B 超时没聊了？（对应开关开启才判断）\n  ↓\n满足 → App 把「推送说话内容」插入聊天（聊天里可见）\n  ↓\nLI 用【网页里配置的模型】正常回复（和你在网页里聊天完全一样）\n  ↓\nApp 把 LI 的回复弹成通知 → 记录时间（防刷屏）\n\n【触发条件】\n• A 定时：在设定时刻 ±7 分钟内，且当天该时刻还没发过\n• B 久未互动：超过阈值小时没聊天，且距上次主动推送也超过阈值小时\n\n【模型在哪配】\nLI 网页右上角设置 → 聊天模型。网页里填的 Key/地址/模型就是推送用的模型——App 不存任何模型配置，所以模型改不了时请去网页设置。\n\n【生效前提】\n① 总开关开启 ② A 或 B 任一开启 ③ 网页已配置聊天模型（Key 非空）④ 通知权限已授权 ⑤ App 进程存活（被系统杀掉则无法推送，这是无服务器方案的固有边界）"
                 android:textSize="12sp"
                 android:textColor="@color/text_secondary"
                 android:layout_marginTop="2dp"
@@ -220,7 +160,7 @@
             <TextView android:text="数据管理（你的信息掌控）" android:textSize="14sp" android:textColor="@color/text_secondary" android:layout_width="match_parent" android:layout_height="wrap_content" />
             <TextView
                 android:id="@+id/tvDataInfo"
-                android:text="你的全部数据都在 App 私有沙盒里（不联网、不进云）：\n• 聊天记录 / 网页聊天 Key / 云端语音 Key → LI 的网页存储（localStorage，键 liChatData_v2）\n• 推送 Key / 推送开关 / 阈值 / 时刻 → App 原生配置（shared_prefs）\n两套都在 /data/data/com.li.android/ 下，手机文件管理器翻不到（系统隔离），所以用本面板管理。"
+                android:text="你的全部数据都在 App 私有沙盒里（不联网、不进云）：\n• 聊天记录 / 网页聊天 Key（含推送用的模型）/ 云端语音 Key → LI 的网页存储（localStorage，键 liChatData_v2）\n• 推送开关 / 说话内容 / 阈值 / 时刻 → App 原生配置（shared_prefs）\n两套都在 /data/data/com.li.android/ 下，手机文件管理器翻不到（系统隔离），所以用本面板管理。"
                 android:textSize="12sp"
                 android:textColor="@color/text_secondary"
                 android:layout_marginTop="2dp"

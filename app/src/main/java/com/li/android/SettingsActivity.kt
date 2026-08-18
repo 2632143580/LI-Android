@@ -11,7 +11,6 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
-import android.text.InputType
 import android.view.View
 import android.widget.*
 import androidx.appcompat.app.AlertDialog
@@ -19,22 +18,19 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.Toolbar
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
-import java.net.HttpURLConnection
-import java.net.URL
-
-/** 预设 LLM 服务商：点选只填接口地址（chat/completions 完整端点），模型由「拉取模型列表」实时获取。 */
-private data class LlmPreset(val name: String, val url: String)
 
 /**
  * 设置页：
- *  - 推送总开关 / 推送用 LLM / A·B 独立开关 / 闲置阈值 / 定时时刻
+ *  - 推送总开关 / 推送说话内容 / A·B 独立开关 / 闲置阈值 / 定时时刻
  *  - 云端语音（MiMo TTS）Key
  *  - 数据管理：位置说明 + 统计 + 导出 / 清空 / 重置（危险操作区，带确认）
- *  - 状态权限：通知 / 电池豁免 / 测试推送
+ *  - 状态权限：通知 / 电池豁免 / 测试推送（让 li 说一句话）
  *  - 关于：应用版本 + 网页内核版本（热更新）+ 检查网页更新
+ *
+ * 推送机制：App 定时把「推送说话内容」插入聊天 → LI 用【网页里配置的模型】回复 →
+ *   App 把回复弹成通知。App 不持有任何 LLM 配置（模型/Key 在 LI 网页右上设置里配）。
  *
  * 网页侧动作（清空/重置/导出）只在此写入 pendingWebAction，真正执行发生在
  * MainActivity 加载 LI 时（因为 WebView 在 MainActivity）。操作后需返回主界面生效。
@@ -95,14 +91,11 @@ class SettingsActivity : AppCompatActivity() {
         findViewById<Switch>(R.id.swEnabled).isChecked = prefs.enabled
         findViewById<Switch>(R.id.swA).isChecked = prefs.enableA
         findViewById<Switch>(R.id.swB).isChecked = prefs.enableB
-        findViewById<CheckBox>(R.id.cbSyncWeb).isChecked = prefs.syncToWeb
     }
 
     // ===== 输入框回填 =====
     private fun bindInputs() {
-        findViewById<EditText>(R.id.etKey).setText(prefs.apiKey)
-        findViewById<EditText>(R.id.etBase).setText(prefs.baseUrl)
-        findViewById<EditText>(R.id.etModel).setText(prefs.model)
+        findViewById<EditText>(R.id.etSayText).setText(prefs.companionText)
         findViewById<EditText>(R.id.etIdle).setText(prefs.idleHours.toString())
         findViewById<EditText>(R.id.etSchedule).setText(
             prefs.scheduleTimes.joinToString(",") { "%02d:%02d".format(it.hour, it.minute) }
@@ -220,26 +213,39 @@ class SettingsActivity : AppCompatActivity() {
         findViewById<Button>(R.id.btnCheckUpdate).setOnClickListener { checkUpdate() }
         // 危险区折叠：默认收起，点击展开/收起
         findViewById<Button>(R.id.btnToggleDanger).setOnClickListener { toggleDanger() }
-        // LLM 连通测试：验证推送 LLM 是否真能用
-        findViewById<Button>(R.id.btnTestLlm).setOnClickListener { testLlm() }
-        // 服务商：点选只填接口地址（完整 chat/completions 端点），模型靠「拉取模型列表」实时拿
-        bindPresets()
-        // 拉取模型列表 + Key 眼睛
-        findViewById<Button>(R.id.btnFetchModels).setOnClickListener { fetchModels() }
-        bindKeyToggles()
+        // 测试推送：让 li 说一句话（走真实链路：插入消息 → LI 网页模型回复 → 弹通知）
+        findViewById<Button>(R.id.btnTestSay).setOnClickListener { testSay() }
+        // 云端语音 Key「显示/隐藏」眼睛切换（与 LI 网页同款交互）
+        findViewById<Button>(R.id.btnToggleTtsKey).setOnClickListener {
+            toggleTtsKeyVisibility()
+        }
         // 推送就绪状态
         bindPushStatus()
+    }
+
+    /** 云端语音 Key 输入框「显示/隐藏」眼睛切换。 */
+    private fun toggleTtsKeyVisibility() {
+        val et = findViewById<EditText>(R.id.etTtsKey)
+        val btn = findViewById<Button>(R.id.btnToggleTtsKey)
+        val isPassword = (et.inputType and android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD) != 0
+        et.inputType = if (isPassword) {
+            btn.text = "隐藏"
+            android.text.InputType.TYPE_CLASS_TEXT or
+                android.text.InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+        } else {
+            btn.text = "显示"
+            android.text.InputType.TYPE_CLASS_TEXT or
+                android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+        }
+        et.setSelection(et.text.length)
     }
 
     private fun save() {
         prefs.enabled = findViewById<Switch>(R.id.swEnabled).isChecked
         prefs.enableA = findViewById<Switch>(R.id.swA).isChecked
         prefs.enableB = findViewById<Switch>(R.id.swB).isChecked
-        prefs.syncToWeb = findViewById<CheckBox>(R.id.cbSyncWeb).isChecked
 
-        prefs.apiKey = findViewById<EditText>(R.id.etKey).text.toString().trim()
-        prefs.baseUrl = findViewById<EditText>(R.id.etBase).text.toString().trim()
-        prefs.model = findViewById<EditText>(R.id.etModel).text.toString().trim()
+        prefs.companionText = findViewById<EditText>(R.id.etSayText).text.toString().trim()
         prefs.idleHours = findViewById<EditText>(R.id.etIdle).text.toString().toFloatOrNull() ?: 3f
         prefs.setSchedule(findViewById<EditText>(R.id.etSchedule).text.toString().trim())
 
@@ -249,163 +255,44 @@ class SettingsActivity : AppCompatActivity() {
         bindPushStatus()
     }
 
+    /** 测试推送：先保存说话内容，再走真实链路让 li 回复（主界面需存活）。 */
+    private fun testSay() {
+        val tv = findViewById<TextView>(R.id.tvPushStatus)
+        save()
+        val act = MainActivity.instance
+        if (act == null) {
+            tv.text = "推送就绪状态：主界面不在（先返回主界面打开 LI，再回来点此测试）"
+            return
+        }
+        tv.text = "推送就绪状态：已让 li 说一句话，等回复弹通知…（网页没配模型会静默失败）"
+        act.requestCompanionSay(prefs.companionText)
+    }
+
     /**
-     * 服务商按钮：点选只填接口地址（chat/completions 完整端点，与 LI 网页同口径）。
-     * 模型绝不预填——过时模型名由「拉取模型列表」实时获取。
+     * 推送就绪状态：总开关 + A/B 开关 + 【网页】聊天 LLM 是否已配置。
+     * 网页 LLM 配置从注入统计回传读取（打开一次 LI 后更新；保存时 force 重注入也会刷新）。
      */
-    private fun bindPresets() {
-        val presets = listOf(
-            LlmPreset("智谱", "https://open.bigmodel.cn/api/paas/v4/chat/completions"),
-            LlmPreset("DeepSeek", "https://api.deepseek.com/v1/chat/completions"),
-            LlmPreset("通义千问", "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"),
-            LlmPreset("Kimi", "https://api.moonshot.cn/v1/chat/completions"),
-            LlmPreset("OpenAI", "https://api.openai.com/v1/chat/completions"),
-            LlmPreset("Ollama 本地", "http://localhost:11434/v1/chat/completions")
-        )
-        val container = findViewById<LinearLayout>(R.id.llPresets)
-        container.removeAllViews()
-        presets.forEach { preset ->
-            val btn = Button(this)
-            btn.text = preset.name
-            btn.textSize = 13f
-            btn.setBackgroundColor(ContextCompat.getColor(this, R.color.surface_variant))
-            btn.setTextColor(ContextCompat.getColor(this, R.color.text_primary))
-            btn.setPadding(24, 8, 24, 8)
-            val lp = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-            lp.setMargins(0, 0, 12, 0)
-            btn.layoutParams = lp
-            btn.setOnClickListener {
-                findViewById<EditText>(R.id.etBase).setText(preset.url)
-                toast("已填入${preset.name}接口地址；补上 Key 后点「拉取模型列表」选模型")
-            }
-            container.addView(btn)
-        }
-    }
-
-    /** 拉取模型列表（行业标准：GET {地址去 /chat/completions}/models，需 Authorization Bearer Key）。 */
-    private fun fetchModels() {
-        val base = findViewById<EditText>(R.id.etBase).text.toString().trim()
-        val key = findViewById<EditText>(R.id.etKey).text.toString().trim()
-        val tv = findViewById<TextView>(R.id.tvModelHint)
-        val container = findViewById<LinearLayout>(R.id.llModels)
-        container.removeAllViews()
-        if (base.isBlank()) { tv.text = "请先填接口地址再拉取"; return }
-        if (key.isBlank()) { tv.text = "请先填 API Key 再拉取"; return }
-        tv.text = "正在从该服务商拉取模型…"
-        Thread {
-            try {
-                var modelsUrl = base.replace("/chat/completions", "/models")
-                if (!modelsUrl.endsWith("/models")) modelsUrl = modelsUrl.trimEnd('/') + "/models"
-                val conn = (URL(modelsUrl).openConnection() as HttpURLConnection).apply {
-                    requestMethod = "GET"
-                    setRequestProperty("Authorization", "Bearer $key")
-                    connectTimeout = 15000
-                    readTimeout = 20000
-                }
-                if (conn.responseCode != 200) {
-                    val code = conn.responseCode
-                    conn.disconnect()
-                    runOnUiThread { tv.text = "拉取失败：HTTP $code（地址或 Key 不对？）" }
-                    return@Thread
-                }
-                val body = conn.inputStream.bufferedReader().use { it.readText() }
-                conn.disconnect()
-                val j = JSONObject(body)
-                val arr = j.optJSONArray("data") ?: j.optJSONArray("models") ?: JSONArray()
-                val names = (0 until arr.length()).mapNotNull { i ->
-                    val o = arr.optJSONObject(i) ?: return@mapNotNull null
-                    o.optString("id").ifBlank { o.optString("name") }.ifBlank { null }
-                }
-                runOnUiThread {
-                    if (names.isEmpty()) {
-                        tv.text = "未获取到模型（该服务商可能不支持此接口）"
-                        return@runOnUiThread
-                    }
-                    tv.text = "共 ${names.size} 个模型，点选填入${if (names.size > 50) "（仅显示前 50 个）" else ""}"
-                    names.take(50).forEach { name ->
-                        val btn = Button(this)
-                        btn.text = name
-                        btn.textSize = 13f
-                        btn.setAllCaps(false)
-                        btn.setBackgroundColor(ContextCompat.getColor(this, R.color.surface_variant))
-                        btn.setTextColor(ContextCompat.getColor(this, R.color.text_primary))
-                        btn.setPadding(24, 8, 24, 8)
-                        val lp = LinearLayout.LayoutParams(
-                            LinearLayout.LayoutParams.MATCH_PARENT,
-                            LinearLayout.LayoutParams.WRAP_CONTENT
-                        )
-                        lp.setMargins(0, 0, 0, 6)
-                        btn.layoutParams = lp
-                        btn.setOnClickListener {
-                            findViewById<EditText>(R.id.etModel).setText(name)
-                            tv.text = "已选模型：$name"
-                        }
-                        container.addView(btn)
-                    }
-                }
-            } catch (e: Exception) {
-                runOnUiThread { tv.text = "拉取失败：${e.message ?: "网络错误"}" }
-            }
-        }.start()
-    }
-
-    /** Key 输入框「显示/隐藏」眼睛切换（与 LI 网页同款交互）。 */
-    private fun bindKeyToggles() {
-        findViewById<Button>(R.id.btnToggleKey).setOnClickListener { toggleKeyVisibility(R.id.etKey, R.id.btnToggleKey) }
-        findViewById<Button>(R.id.btnToggleTtsKey).setOnClickListener { toggleKeyVisibility(R.id.etTtsKey, R.id.btnToggleTtsKey) }
-    }
-
-    private fun toggleKeyVisibility(editId: Int, btnId: Int) {
-        val et = findViewById<EditText>(editId)
-        val btn = findViewById<Button>(btnId)
-        val isPassword = (et.inputType and InputType.TYPE_TEXT_VARIATION_PASSWORD) != 0
-        et.inputType = if (isPassword) {
-            btn.text = "隐藏"
-            InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
-        } else {
-            btn.text = "显示"
-            InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-        }
-        et.setSelection(et.text.length)
-    }
-
-    /** 推送就绪状态：总开关 + Key + A/B 开关 是否齐全。 */
     private fun bindPushStatus() {
         val tv = findViewById<TextView>(R.id.tvPushStatus)
         val reasons = mutableListOf<String>()
         if (!prefs.enabled) reasons.add("总开关已关闭")
-        if (prefs.apiKey.isBlank()) reasons.add("未填推送 LLM 的 API Key")
-        if (prefs.baseUrl.isBlank()) reasons.add("未填接口地址")
-        if (prefs.model.isBlank()) reasons.add("未填模型")
         if (!prefs.enableA && !prefs.enableB) reasons.add("A 定时与 B 久未互动都关着")
+
+        val statsKnown = prefs.storageStatsJson.isNotBlank()
+        val llmConfigured = try {
+            JSONObject(prefs.storageStatsJson).optBoolean("llmConfigured", false)
+        } catch (_: Exception) { false }
+        if (!statsKnown) {
+            reasons.add("网页 LLM 配置未知（返回主界面打开一次 LI 后回来查看）")
+        } else if (!llmConfigured) {
+            reasons.add("网页未配置聊天模型（去 LI 网页右上设置填 Key）")
+        }
+
         tv.text = if (reasons.isEmpty()) {
-            "推送就绪状态：已就绪 ✓（满足 A/B 任一条件即触发；可点下方「测试 LLM 连通」验证）"
+            "推送就绪状态：已就绪 ✓（A/B 任一触发时，li 会用网页模型回复并弹通知）"
         } else {
             "推送就绪状态：未生效（" + reasons.joinToString("；") + "）"
         }
-    }
-
-    /** 测试推送 LLM 是否连通：后台调一次接口，结果回显。 */
-    private fun testLlm() {
-        val tv = findViewById<TextView>(R.id.tvPushStatus)
-        if (prefs.apiKey.isBlank()) {
-            tv.text = "推送就绪状态：未填 API Key，先填再测"
-            return
-        }
-        tv.text = "推送就绪状态：正在测试 LLM 连通…"
-        Thread {
-            val msg = LlmClient.fetchCompanionMessage(prefs)
-            runOnUiThread {
-                tv.text = if (msg != null) {
-                    "推送就绪状态：LLM 连通成功 ✓ 示例：$msg"
-                } else {
-                    "推送就绪状态：LLM 连通失败（Key/地址/网络任一有问题，检查后重试）"
-                }
-            }
-        }.start()
     }
 
     /** 危险区折叠：展开/收起清空、重置操作。 */
@@ -454,11 +341,6 @@ class SettingsActivity : AppCompatActivity() {
     private fun getAppVersion(): String = try {
         packageManager.getPackageInfo(packageName, 0).versionName ?: "未知"
     } catch (_: Exception) { "未知" }
-
-    private fun getLiVersion(): String = try {
-        val txt = assets.open("li_version.txt").bufferedReader().use { it.readText().trim() }
-        if (txt.isEmpty()) "未知" else txt
-    } catch (_: Exception) { "开发版（本地运行）" }
 
     // ===== 数据面板统计 =====
     private fun showStats() {

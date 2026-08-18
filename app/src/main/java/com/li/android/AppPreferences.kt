@@ -8,9 +8,12 @@ import android.content.SharedPreferences
  *
  * 两套独立存储（互不干扰）：
  *   1) 本文件（SharedPreferences li_companion.xml）—— App 原生配置，只有原生代码读写：
- *      推送总开关、推送用 LLM、A/B 独立开关、mimo 云端语音、pendingWebAction 等。
+ *      推送总开关、推送说话内容、A/B 独立开关、mimo 云端语音、pendingWebAction 等。
  *   2) LI 网页的 localStorage（键名 liChatData_v2）—— LI 自己管理：聊天记录、网页聊天 LLM Key、
  *      mimo 语音 Key、配色等。原生读不到其内容，需经注入脚本在网页侧读写。
+ *
+ * 推送模型说明：App 不存任何 LLM 配置（Key/地址/模型）。推送 = App 插入触发语，
+ *   LI 用【网页里配置的模型】回复，App 只负责把回复弹成通知。
  */
 class AppPreferences(context: Context) {
     private val sp: SharedPreferences =
@@ -21,24 +24,12 @@ class AppPreferences(context: Context) {
         get() = sp.getBoolean("enabled", true)
         set(v) = sp.edit().putBoolean("enabled", v).apply()
 
-    // ===== 推送用 LLM（后台 AI 主动说话的脑子）=====
-    var apiKey: String
-        get() = sp.getString("api_key", "") ?: ""
-        set(v) = sp.edit().putString("api_key", v).apply()
-
-    // 地址/模型默认空串 =「未设置」：注入网页时不覆盖网页已有值；LlmClient 实际请求时才 fallback 默认。
-    var baseUrl: String
-        get() = sp.getString("base_url", "") ?: ""
-        set(v) = sp.edit().putString("base_url", v).apply()
-
-    var model: String
-        get() = sp.getString("model", "") ?: ""
-        set(v) = sp.edit().putString("model", v).apply()
-
-    // 填一次注入两边：把上面的推送 LLM 同时写进 LI 网页，省得在网页再填一次
-    var syncToWeb: Boolean
-        get() = sp.getBoolean("sync_to_web", false)
-        set(v) = sp.edit().putBoolean("sync_to_web", v).apply()
+    // ===== 推送说话内容（App 插入聊天、让 LI 回复的触发语）=====
+    // 推送机制：App 定时把这句话插入聊天 → LI 用【网页里配置的模型】回复 → App 把回复推给你。
+    // App 不持有任何 LLM 配置，模型/Key 一律在 LI 网页设置里配。
+    var companionText: String
+        get() = sp.getString("companion_text", "在吗？今天过得怎么样，说说话吧") ?: "在吗？今天过得怎么样，说说话吧"
+        set(v) = sp.edit().putString("companion_text", v).apply()
 
     // ===== A 定时陪伴 / B 久未互动 独立开关 =====
     var enableA: Boolean

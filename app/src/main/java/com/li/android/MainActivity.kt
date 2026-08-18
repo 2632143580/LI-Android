@@ -33,14 +33,24 @@ import androidx.core.content.ContextCompat
  */
 class MainActivity : AppCompatActivity() {
 
+    companion object {
+        /** 存活中的 MainActivity 实例（CompanionWorker 触发"让 li 说话"时经此注入 WebView） */
+        @Volatile
+        var instance: MainActivity? = null
+    }
+
     private lateinit var webView: WebView
     private lateinit var bridge: AndroidBridge
     private lateinit var webBundle: WebBundleManager
     private var webViewDestroyed = false
+    /** LI 页面是否已加载完成（__liCompanionSay 入口就绪后才有意义） */
+    @Volatile
+    private var pageReady = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+        instance = this
 
         PushScheduler.enqueue(this)
 
@@ -64,6 +74,7 @@ class MainActivity : AppCompatActivity() {
                 super.onPageFinished(view, url)
                 // 只在 LI 入口（app_web/index.html）注入，避免子框架/about:blank 误触发
                 if (webBundle.isLiEntry(url)) {
+                    pageReady = true
                     injectChatObserver(view)
                     injectConfigScript(view)
                 }
@@ -137,8 +148,25 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         webViewDestroyed = true
+        pageReady = false
         AppBus.refreshStats = null
+        instance = null
         super.onDestroy()
+    }
+
+    /**
+     * 让 LI 说一句话（推送核心：插入可见用户消息 → LI 用网页配置的模型回复）。
+     * 由 CompanionWorker（定时触发）或设置页「测试推送」调用。
+     * 回复完成后经 __liCompanionOnReply → AndroidBridge.onCompanionReply 回传并弹通知。
+     * 页面未就绪 / WebView 已销毁时静默跳过（无服务器方案的固有边界）。
+     */
+    fun requestCompanionSay(text: String) {
+        runOnUiThread {
+            if (webViewDestroyed || !pageReady) return@runOnUiThread
+            val quoted = JSONObject.quote(text)
+            webView.evaluateJavascript(
+                "window.__liCompanionSay && window.__liCompanionSay($quoted);", null)
+        }
     }
 
     /**
@@ -154,6 +182,9 @@ class MainActivity : AppCompatActivity() {
 
                 var lastReported = 0;
                 function reportIfNew() {
+                    // li 主动说话（companion-say）插入的 user 气泡不算「用户互动」，
+                    // 否则 li 自己说话会刷新"久未互动"计时器，B 功能永远不触发第二次。
+                    if (sessionStorage.getItem('liCompanionSaying') === '1') return;
                     var now = Date.now();
                     if (now - lastReported < 1000) return;
                     lastReported = now;
@@ -201,13 +232,7 @@ class MainActivity : AppCompatActivity() {
         if (webViewDestroyed) return
         val prefs = AppPreferences(this)
         val nativeConfig = JSONObject().apply {
-            put("syncToWeb", prefs.syncToWeb)
             put("pendingAction", prefs.pendingWebAction)
-            put("push", JSONObject().apply {
-                put("apiKey", prefs.apiKey)
-                put("apiUrl", prefs.baseUrl)
-                put("model", prefs.model)
-            })
             put("tts", JSONObject().apply {
                 put("apiKey", prefs.ttsApiKey)
                 put("baseUrl", prefs.ttsBaseUrl)
@@ -257,9 +282,12 @@ class MainActivity : AppCompatActivity() {
                         ttsSource = d.settings.ttsSource || '?';
                         ttsCfg = !!(d.settings.ttsCloud && d.settings.ttsCloud.apiKey);
                     }
+                    // llmConfigured：网页是否已配置聊天模型（推送就绪状态用它判断）
+                    var llmCfg = !!(d && d.settings && d.settings.apiKey);
                     try { window.AndroidBridge.onStorageStats(JSON.stringify({
                         totalBytes: total, keyCount: keys, chatNodes: nodes,
-                        ttsSource: ttsSource, ttsCloudConfigured: ttsCfg
+                        ttsSource: ttsSource, ttsCloudConfigured: ttsCfg,
+                        llmConfigured: llmCfg
                     })); } catch (e) {}
                 })();
 
@@ -284,21 +312,7 @@ class MainActivity : AppCompatActivity() {
                     try { window.AndroidBridge.onWebActionDone(); } catch (e) {}
                 }
 
-                // 3) 填一次注入两边（推送 LLM → 网页聊天 LLM）：
-                //    仅当 App 侧该字段非空才覆盖，空字段绝不碰网页已有值（不把默认值塞进网页）。
-                if (NATIVE.syncToWeb && NATIVE.push && NATIVE.push.apiKey) {
-                    var d = readData();
-                    if (d && d.settings) {
-                        var s = d.settings;
-                        var changed = false;
-                        if (s.apiKey !== NATIVE.push.apiKey) { s.apiKey = NATIVE.push.apiKey; changed = true; }
-                        if (NATIVE.push.apiUrl && s.apiUrl !== NATIVE.push.apiUrl) { s.apiUrl = NATIVE.push.apiUrl; changed = true; }
-                        if (NATIVE.push.model && s.model !== NATIVE.push.model) { s.model = NATIVE.push.model; changed = true; }
-                        if (changed) { writeData(d); safeReload(); return; }
-                    }
-                }
-
-                // 4) mimo 云端语音：同样「App 空字段不覆盖网页已有配置」+ 全量比对（幂等，杜绝闪烁死循环）
+                // 3) mimo 云端语音：同样「App 空字段不覆盖网页已有配置」+ 全量比对（幂等，杜绝闪烁死循环）
                 if (NATIVE.tts && NATIVE.tts.apiKey) {
                     var d = readData();
                     if (d && d.settings) {
@@ -311,6 +325,15 @@ class MainActivity : AppCompatActivity() {
                         if (NATIVE.tts.model && tc.model !== NATIVE.tts.model) { tc.model = NATIVE.tts.model; changed = true; }
                         if (changed) { s.ttsCloud = tc; writeData(d); safeReload(); return; }
                     }
+                }
+
+                // 4) 注册"li 主动说话回复"回调：CompanionWorker/测试按钮触发说话后，
+                //    LI 用【网页自己的模型】回复完成，回复内容经此回传原生弹通知。
+                //    重复注入会覆盖旧回调（同一定义），幂等无副作用。
+                if (window.__liCompanionOnReply) {
+                    window.__liCompanionOnReply(function(content, isError) {
+                        try { window.AndroidBridge.onCompanionReply(content || '', !!isError); } catch(e) {}
+                    });
                 }
             })();
         """

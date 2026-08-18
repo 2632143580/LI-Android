@@ -71,4 +71,18 @@ class AndroidBridge(
             // 导出失败静默忽略，设置页会显示错误提示
         }
     }
+
+    /**
+     * li 主动说话的回复回传（companion-say → LI 网页模型回复完成）。
+     * 成功：弹通知显示 li 的话；失败：不打扰用户。
+     * 无论成败都记录"本次主动已发生"（防刷屏：避免回复失败导致每分钟重试轰炸）。
+     */
+    @JavascriptInterface
+    fun onCompanionReply(text: String?, isError: Boolean) {
+        val prefs = prefsProvider()
+        prefs.markProactiveNow()
+        val msg = text?.trim()
+        if (isError || msg.isNullOrBlank()) return
+        NotificationHelper.show(appCtx, msg)
+    }
 }
